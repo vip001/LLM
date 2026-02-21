@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0f0f12;
+  --card: #18181c;
+  --border: #2a2a30;
+  --muted: #71717a;
+  --accent: #a78bfa;
+  --accent-hover: #c4b5fd;
+}
+
+body {
+  background: var(--bg);
+  color: #e4e4e7;
+  min-height: 100vh;
+}

@@ -1,0 +1,31 @@
+# 注释：以 # 开头的行是注释，不会生效
+
+# 忽略操作系统临时文件
+.DS_Store       # Mac 系统
+Thumbs.db       # Windows 系统
+*.tmp           # 所有 .tmp 后缀的文件
+
+# 忽略编辑器配置文件
+.idea/          # IntelliJ IDEA
+.vscode/        # VS Code
+*.sublime-*     # Sublime Text
+*.swp           # Vim 临时文件
+
+# 忽略编程语言/框架的依赖/编译文件
+node_modules/   # Node.js 依赖
+.venv/           # Python 虚拟环境
+__pycache__/     # Python 字节码缓存
+target/         # Java Maven/Gradle 编译产物
+dist/           # 前端打包产物
+build/          # 通用编译目录
+.next/          # Next.js 构建缓存与产物
+webui/.next/    # Next.js 构建（webui 子目录）
+*.log           # 日志文件
+*.lock          # 依赖锁文件（如 package-lock.json 若不需要跟踪）
+
+# 本地数据/生成目录
+server/chromastore/   # 向量库数据
+server/__pycache__/
+
+# 忽略敏感配置文件
+.env            # 环境变量文件（包含密钥、数据库信息等）
