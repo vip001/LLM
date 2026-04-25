@@ -1,0 +1,18 @@
+#  调用 Ollama API 查看「正在加载/运行」的模型（精准）
+http://localhost:11434/api/ps
+
+# 调用 Ollama API 查看「已拉取」的模型（包括 tag）
+http://localhost:11434/api/tags
+
+curl http://127.0.0.1:11434/api/generate -d '{
+  "model":"lukey03/qwen3.5-9b-abliterated-vision",
+  "prompt":"你好，简单回答",
+  "stream":false
+}'
+curl http://localhost:11434/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "lukey03/qwen3.5-9b-abliterated-vision",
+    "messages": [{"role": "user", "content": "你好，介绍下自己"}],
+    "stream": false
+  }'

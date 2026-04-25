@@ -1,13 +1,26 @@
 # API 服务
 flask>=3.0.0
+gunicorn>=23.0.0
 
 # 使用 LangChain 连接本地 Ollama 模型
 langchain>=0.3.0
 langchain-core>=0.3.0
+langgraph>=0.2.0
 langchain-ollama>=0.2.0
 
 # PDF 解析 + 向量库（FAISS，兼容 Python 3.14）
 langchain-community>=0.3.0
 pypdf>=4.0.0
+Pillow>=10.0.0
 langchain-text-splitters>=0.3.0
+langchain-experimental>=0.3.0
 faiss-cpu>=1.9.0
+
+# 环境变量加载
+python-dotenv>=1.0.0
+
+# 阿里云百炼 DashScope 多模态向量（Qwen Multimodal Embedding）
+dashscope>=1.20.0
+
+# 图可视化导出（LangGraph draw_png）
+#pygraphviz>=1.14

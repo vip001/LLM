@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI助手 - 你的智能伙伴</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f7f7f7;
+            color: #333;
+        }
+
+        /* 导航栏 */
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 5%;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #0066cc;
+        }
+
+        .nav-links {
+            display: flex;
+            list-style: none;
+            gap: 2rem;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: #333;
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+
+        .nav-links a:hover {
+            color: #0066cc;
+        }
+
+        /* 主内容区 */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+
+        /* 侧边栏 */
+        .sidebar {
+            width: 250px;
+            background-color: white;
+            padding: 1rem;
+            border-right: 1px solid #e5e5e5;
+            overflow-y: auto;
+        }
+
+        .sidebar h3 {
+            margin-bottom: 1rem;
+            color: #666;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .conversation-list {
+            list-style: none;
+        }
+
+        .conversation-item {
+            padding: 0.8rem;
+            margin-bottom: 0.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        .conversation-item:hover {
+            background-color: #f0f7ff;
+        }
+
+        .conversation-item.active {
+            background-color: #e6f2ff;
+            color: #0066cc;
+        }
+
+        /* 对话区 */
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: white;
+        }
+
+        .chat-header {
+            padding: 1rem;
+            border-bottom: 1px solid #e5e5e5;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .chat-actions {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .chat-actions button {
+            padding: 0.5rem 1rem;
+            border: 1px solid #e5e5e5;
+            background-color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .chat-actions button:hover {
+            background-color: #f0f7ff;
+            border-color: #0066cc;
+        }
+
+        /* 消息列表 */
+        .message-list {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .message {
+            max-width: 70%;
+            padding: 1rem;
+            border-radius: 12px;
+            line-height: 1.6;
+        }
+
+        .user-message {
+            align-self: flex-end;
+            background-color: #0066cc;
+            color: white;
+        }
+
+        .ai-message {
+            align-self: flex-start;
+            background-color: #f0f7ff;
+            color: #333;
+        }
+
+        /* 输入区 */
+        .input-area {
+            padding: 1rem;
+            border-top: 1px solid #e5e5e5;
+            display: flex;
+            gap: 1rem;
+            background-color: white;
+        }
+
+        #message-input {
+            flex: 1;
+            padding: 1rem;
+            border: 1px solid #e5e5e5;
+            border-radius: 24px;
+            font-size: 1rem;
+            resize: none;
+            min-height: 50px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        #message-input:focus {
+            outline: none;
+            border-color: #0066cc;
+            box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+        }
+
+        #send-button {
+            padding: 1rem 2rem;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 24px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: background-color 0.3s ease;
+        }
+
+        #send-button:hover {
+            background-color: #0052a3;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+
+            .nav-links {
+                gap: 1rem;
+            }
+
+            .message {
+                max-width: 90%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">AI助手</div>
+        <ul class="nav-links">
+            <li><a href="#">首页</a></li>
+            <li><a href="#">功能</a></li>
+            <li><a href="#">帮助</a></li>
+        </ul>
+    </nav>
+
+    <div class="main-container">
+        <aside class="sidebar">
+            <h3>最近对话</h3>
+            <ul class="conversation-list">
+                <li class="conversation-item active">新对话</li>
+                <li class="conversation-item">Python编程指南</li>
+                <li class="conversation-item">旅行攻略</li>
+                <li class="conversation-item">健康饮食</li>
+            </ul>
+        </aside>
+
+        <section class="chat-area">
+            <div class="chat-header">
+                <div class="chat-title">新对话</div>
+                <div class="chat-actions">
+                    <button>清空</button>
+                    <button>保存</button>
+                </div>
+            </div>
+
+            <div class="message-list" id="message-list">
+                <div class="message ai-message">
+                    你好！我是你的AI助手，有什么可以帮你的吗？
+                </div>
+            </div>
+
+            <div class="input-area">
+                <textarea id="message-input" placeholder="输入你的问题..."></textarea>
+                <button id="send-button">发送</button>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const messageList = document.getElementById('message-list');
+
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        function sendMessage() {
+            const messageText = messageInput.value.trim();
+            if (!messageText) return;
+
+            // 创建用户消息
+            const userMessage = document.createElement('div');
+            userMessage.className = 'message user-message';
+            userMessage.textContent = messageText;
+            messageList.appendChild(userMessage);
+
+            // 清空输入框
+            messageInput.value = '';
+
+            // 模拟AI回复
+            setTimeout(() => {
+                const aiMessage = document.createElement('div');
+                aiMessage.className = 'message ai-message';
+                aiMessage.textContent = '这是AI的回复内容。';
+                messageList.appendChild(aiMessage);
+                // 滚动到底部
+                messageList.scrollTop = messageList.scrollHeight;
+            }, 1000);
+
+            // 滚动到底部
+            messageList.scrollTop = messageList.scrollHeight;
+        }
+    </script>
+</body>
+</html>
