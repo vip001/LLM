@@ -1,0 +1,51 @@
+docker stop 容器名/ID
+docker start 容器名/ID
+docker rm 容器名/ID
+docker logs -f 容器名
+docker run -d \
+  --name my-container \
+  -p 8080:80 \
+  -v /本机目录:/容器目录 \
+  --restart=always \
+  镜像名
+docker exec -it 容器ID bash
+docker exec -it 容器ID sh
+
+docker system prune      # 清理停止容器+悬空镜像+无用网络
+docker system prune -a   # 深度清理（所有未使用镜像）
+
+docker stop 容器ID && docker rm 容器ID
+docker rmi 镜像ID
+
+# ---------------- 本地 Docker 发布 ----------------
+docker compose up -d --build
+docker compose logs -f server webui nginx
+docker compose down
+scp -i ~/.ssh/login.pem -P 22 .env root@120.26.236.143:/opt/llm/.env
+# ---------------- 阿里云 ACR 发布 ----------------
+# 1) 登录阿里云镜像仓库（把地址替换成你自己的）
+docker login --username=vip1002 crpi-et6d0bbajol75ec4.cn-hangzhou.personal.cr.aliyuncs.com
+
+# 2) 本地构建并推送 server + webui + nginx 镜像
+ACR_REGISTRY=registry.cn-hangzhou.aliyuncs.com \
+ACR_NAMESPACE=<你的命名空间> \
+IMAGE_TAG=v1.0.0 \
+./deploy-aliyun.sh
+
+# 3) 在阿里云服务器拉取并启动（手动方式）
+# 先把 docker-compose.aliyun.yml 上传到服务器目录并重命名为 docker-compose.yml
+export ACR_REGISTRY=registry.cn-hangzhou.aliyuncs.com
+export ACR_NAMESPACE=<你的命名空间>
+export IMAGE_TAG=v1.0.0
+docker compose pull
+docker compose up -d
+
+# 4) 一键推送并部署到阿里云服务器（可选）
+ACR_REGISTRY=registry.cn-hangzhou.aliyuncs.com \
+ACR_NAMESPACE=<你的命名空间> \
+IMAGE_TAG=v1.0.0 \
+ALIYUN_HOST=<服务器IP> \
+ALIYUN_USER=<服务器用户> \
+ALIYUN_PORT=22 \
+REMOTE_APP_DIR=/opt/llm \
+./deploy-aliyun.sh

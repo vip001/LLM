@@ -1,0 +1,48 @@
+networks:
+  llm_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.240.0/24
+
+services:
+  server:
+    image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-server:${IMAGE_TAG:-latest}
+    container_name: llm-server
+    env_file:
+      - .env
+    expose:
+      - "5000"
+    volumes:
+      - ./server/chromastore:/app/server/chromastore
+    restart: unless-stopped
+    networks:
+      llm_net:
+        ipv4_address: 172.28.240.11
+
+  webui:
+    image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-webui:${IMAGE_TAG:-latest}
+    container_name: llm-webui
+    depends_on:
+      - server
+    environment:
+      FLASK_ASK_URL: http://server:5000/ask
+    expose:
+      - "3000"
+    restart: unless-stopped
+    networks:
+      llm_net:
+        ipv4_address: 172.28.240.10
+
+  nginx:
+    image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-nginx:${IMAGE_TAG:-latest}
+    container_name: llm-nginx
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/logs:/var/log/nginx
+    restart: unless-stopped
+    networks:
+      - llm_net

@@ -34,11 +34,10 @@ try:
 except ImportError:
     OllamaResponseError = None  # type: ignore[misc, assignment]
 
-# 默认配置
-# 若出现 502：请确认 Ollama 已启动 (ollama list)、已拉取嵌入模型 (ollama pull bge-m3)
+# 默认配置（与 embedding_provider 默认模型一致，供未传入 embeddings 时使用）
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_STORE_DIR = PROJECT_ROOT / "chromastore"
-DEFAULT_EMBED_MODEL = "bge-m3"
+DEFAULT_EMBED_MODEL = "fervent_mcclintock/Qwen3-VL-Embedding-2B:F16"
 DEFAULT_BASE_URL = "http://localhost:11434"
 
 
@@ -95,7 +94,7 @@ class VectorDB:
         msg = (
             "Ollama 嵌入服务异常 (502)。请检查：\n"
             "  1. Ollama 是否在运行：终端执行 ollama list\n"
-            "  2. 是否已拉取嵌入模型：ollama pull bge-m3\n"
+            "  2. 是否已拉取嵌入模型：ollama pull fervent_mcclintock/Qwen3-VL-Embedding-2B:F16\n"
             "  3. 若仍报错，可重启 Ollama 后再试。"
         )
         raise RuntimeError(msg) from last_error
@@ -146,6 +145,31 @@ class VectorDB:
         return self._call_with_ollama_retry(
             store.add_documents,
             documents,
+            ids=ids,
+        )
+
+    def add_embeddings(
+        self,
+        text_embeddings: list[tuple[str, list[float]]],
+        metadatas: list[dict] | None = None,
+        ids: list[str] | None = None,
+    ) -> list[str]:
+        """
+        将已计算好的 (文本, 向量) 对加入向量库，用于图片等多模态内容（先外部算向量再写入）。
+
+        Args:
+            text_embeddings: [(page_content, embedding), ...]，page_content 用于检索结果展示
+            metadatas: 与 text_embeddings 等长的元数据列表
+            ids: 可选 ID 列表
+
+        Returns:
+            写入后的 ID 列表
+        """
+        store = self._ensure_loaded()
+        return self._call_with_ollama_retry(
+            store.add_embeddings,
+            text_embeddings,
+            metadatas=metadatas,
             ids=ids,
         )
 
@@ -229,6 +253,34 @@ class VectorDB:
             fetch_k=fetch_k,
         )
 
+    def search_by_vector(
+        self,
+        embedding: list[float],
+        k: int = 4,
+        filter_: dict[str, Any] | None = None,
+        fetch_k: int = 20,
+    ) -> list[Document]:
+        """
+        按向量相似度检索，用于 HyDE 等已预计算 embedding 的场景。
+
+        Args:
+            embedding: 查询向量
+            k: 返回的文档数量
+            filter_: 元数据过滤条件
+            fetch_k: 预取数量
+
+        Returns:
+            与向量最相关的 Document 列表
+        """
+        store = self._ensure_loaded()
+        return self._call_with_ollama_retry(
+            store.similarity_search_by_vector,
+            embedding,
+            k=k,
+            filter=filter_,
+            fetch_k=fetch_k,
+        )
+
     def search_with_score(
         self,
         query: str,
@@ -254,6 +306,34 @@ class VectorDB:
             filter=filter_,
         )
 
+    def search_by_vector_with_score(
+        self,
+        embedding: list[float],
+        k: int = 4,
+        filter_: dict[str, Any] | None = None,
+        fetch_k: int = 20,
+    ) -> list[tuple[Document, float]]:
+        """
+        按向量相似度检索并返回分数（用于 HyDE 等场景的阈值过滤）。
+
+        Args:
+            embedding: 查询向量
+            k: 返回的文档数量
+            filter_: 元数据过滤条件
+            fetch_k: 预取数量
+
+        Returns:
+            (Document, score) 元组列表
+        """
+        store = self._ensure_loaded()
+        return self._call_with_ollama_retry(
+            store.similarity_search_with_score_by_vector,
+            embedding,
+            k=k,
+            filter=filter_,
+            fetch_k=fetch_k,
+        )
+
     def save(self, path: str | Path | None = None) -> None:
         """
         持久化向量库到本地。
@@ -263,8 +343,25 @@ class VectorDB:
         """
         store = self._ensure_loaded()
         target = Path(path) if path is not None else self.store_path
-        target.mkdir(parents=True, exist_ok=True)
-        store.save_local(str(target), index_name="index")
+        target = target.resolve()
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise RuntimeError(
+                f"无法创建向量库目录: {target}，请检查挂载路径与写权限。原始错误: {e}"
+            ) from e
+
+        if not target.exists() or not target.is_dir():
+            raise RuntimeError(f"向量库存储路径不可用: {target}（不是有效目录）")
+
+        try:
+            store.save_local(str(target), index_name="index")
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"写入 FAISS 失败，目标目录: {target}。"
+                "请检查该目录是否真实存在、已正确挂载并具有写权限。"
+                f"原始错误: {e}"
+            ) from e
 
     def as_retriever(self, **kwargs: Any):
         """

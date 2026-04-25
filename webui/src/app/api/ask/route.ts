@@ -1,8 +1,26 @@
-import { NextRequest, NextResponse } from "next/server";
+import { existsSync } from "node:fs";
 
-const FLASK_ASK_URL =
-  process.env.FLASK_ASK_URL ?? "http://127.0.0.1:5000/ask";
+import { NextRequest } from "next/server";
+
 const isDev = process.env.NODE_ENV === "development";
+
+/**
+ * 1) 环境变量 FLASK_ASK_URL（键名拼接，减少被构建器内联）
+ * 2) Docker 内默认走 compose 服务名 server（与 docker-compose 中 Flask 服务名一致）
+ * 3) 非 Docker 的生产回退固定网段 IP；本地开发默认 127.0.0.1
+ */
+function flaskAskUrl(): string {
+  const k = "FLASK" + "_" + "ASK" + "_" + "URL";
+  const u = (process.env as Record<string, string | undefined>)[k];
+  if (typeof u === "string" && u.trim()) return u.trim();
+  if (existsSync("/.dockerenv")) {
+    return "http://server:5000/ask";
+  }
+  if (process.env.NODE_ENV === "production") {
+    return "http://172.28.240.11:5000/ask";
+  }
+  return "http://127.0.0.1:5000/ask";
+}
 
 export const revalidate = 10;
 export const dynamic = "force-dynamic";
@@ -25,6 +43,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const query = (body?.query ?? "").trim();
+    const stream = body?.stream ?? true;
+    const strategy =
+      (body?.strategy ?? body?.enhance_strategy ?? "query2doc").toString().trim() ||
+      "query2doc";
     if (!query) {
       return Response.json(
         errPayload("MISSING_QUERY", "缺少参数 query"),
@@ -32,21 +54,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const target = flaskAskUrl();
     let res: Response;
     try {
-      res = await fetch(FLASK_ASK_URL, {
+      res = await fetch(target, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, stream, strategy }),
       });
     } catch (fetchErr) {
       const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-      console.error("[api/ask] 请求 Flask 失败:", msg, "\nURL:", FLASK_ASK_URL);
+      console.error("[api/ask] 请求 Flask 失败:", msg, "\nURL:", target);
       return Response.json(
         errPayload(
           "FLASK_UNREACHABLE",
           "无法连接后端服务，请确认 Flask 已启动且 FLASK_ASK_URL 正确",
-          isDev ? { url: FLASK_ASK_URL, raw: msg } : undefined
+          isDev ? { url: target, raw: msg } : undefined
         ),
         { status: 502 }
       );
@@ -75,6 +98,9 @@ export async function POST(request: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": res.headers.get("Content-Type") ?? "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     });
   } catch (err) {
