@@ -37,7 +37,7 @@ llm/
 │       ├── components/chat/# 聊天布局与消息、引用、输入框
 │       ├── hooks/useChat.ts
 │       └── lib/            # 流式解析、常量等
-├── requirements.txt        # Python 依赖
+├── server/requirements.txt # Python 依赖
 ├── .env                    # 密钥与模型配置（需自行创建，勿提交）
 ├── pdf/                    # 待入库 PDF（按需创建）
 └── server/chromastore/     # FAISS 持久化目录（运行 pdf 脚本后生成）
@@ -73,13 +73,13 @@ LangGraph 实际流程图（由代码导出）：
 
 ### Python
 
-- Python 3.10+（项目 `requirements.txt` 注明兼容 faiss 与较新版本）
+- Python 3.10+（项目 `server/requirements.txt` 注明兼容 faiss 与较新版本）
 - 虚拟环境建议放在仓库根目录 `.venv`
 
 ```bash
 cd /path/to/llm
 python -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r server/requirements.txt
 ```
 
 ### 必需配置

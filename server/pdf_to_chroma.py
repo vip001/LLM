@@ -8,7 +8,7 @@
 - 图片：从每页提取图片，携带该页文字作为上下文，用多模态模型做「图文融合」向量后入库，检索时可同时命中文本与图片
 
 运行前：
-  pip install -r requirements.txt
+  pip install -r server/requirements.txt
   在 .env 中配置 DASHSCOPE_API_KEY（使用 DashScope 多模态时）
   在项目根目录下创建 pdf 文件夹并放入 PDF 文件
 """

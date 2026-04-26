@@ -14,7 +14,7 @@ API 使用：
   POST /ask   Body: {"query": "MMKV的用法", "strategy": "hyde"}
 
 前置条件：
-1. pip 已安装 dashscope、langchain-community（见 requirements.txt）
+1. pip 已安装 dashscope、langchain-community（见 server/requirements.txt）
 2. 项目根目录 .env 中配置 DASHSCOPE_API_KEY（与官方文档一致）
 3. 可选环境变量：
    - DASHSCOPE_BASE_HTTP_API_URL：DashScope HTTP 基址，默认与官方文档一致

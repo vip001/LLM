@@ -20,6 +20,7 @@ dist/
 build/
 .next/
 webui/.next/
+webui/next-env.d.ts
 *.log
 *.lock
 
