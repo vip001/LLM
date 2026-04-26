@@ -27,6 +27,9 @@ webui/.next/
 server/chromastore/
 server/__pycache__/
 
-# 忽略敏感配置文件
-.env            #环境变量文件（包含密钥、数据库信息等）
-.pycache/
+
+# 环境变量文件（包含密钥、数据库信息等）
+.env
+.pycache
+.pycache_tmp
+

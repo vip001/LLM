@@ -218,16 +218,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     import sys
-    app.run(
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        app.run(
             host=os.getenv("FLASK_HOST", "0.0.0.0"),
             port=int(os.getenv("FLASK_PORT", "5000")),
-            debug=True,
+            debug=False,
         )
-    # if len(sys.argv) > 1 and sys.argv[1] == "serve":
-    #     app.run(
-    #         host=os.getenv("FLASK_HOST", "0.0.0.0"),
-    #         port=int(os.getenv("FLASK_PORT", "5000")),
-    #         debug=False,
-    #     )
-    # else:
-    #     main()
+    else:
+        main()
