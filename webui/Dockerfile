@@ -12,6 +12,8 @@ RUN npm ci
 # 与 compose 中 Flask 服务名一致；compose 可覆盖。未设置时 route.ts 在 /.dockerenv 下也会回退到该地址
 ARG FLASK_ASK_URL=http://server:5000/ask
 ENV FLASK_ASK_URL=${FLASK_ASK_URL}
+ARG NEXT_PUBLIC_AUTH_BASE_URL=/auth
+ENV NEXT_PUBLIC_AUTH_BASE_URL=${NEXT_PUBLIC_AUTH_BASE_URL}
 COPY webui/ ./
 RUN npm run build
 

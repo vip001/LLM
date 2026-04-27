@@ -37,6 +37,11 @@ llm/
 │       ├── components/chat/# 聊天布局与消息、引用、输入框
 │       ├── hooks/useChat.ts
 │       └── lib/            # 流式解析、常量等
+├── loginserver/            # FastAPI 登录服务（邮箱验证码 + 会话/JWT）
+│   ├── loginserver.py      # 认证 API 入口
+│   ├── redis_store.py      # Redis 键与客户端封装
+│   ├── postgres_store.py   # 会话持久化（PostgreSQL）
+│   └── requirements.txt
 ├── server/requirements.txt # Python 依赖
 ├── .env                    # 密钥与模型配置（需自行创建，勿提交）
 ├── pdf/                    # 待入库 PDF（按需创建）
@@ -58,9 +63,12 @@ llm/
 flowchart LR
   Browser[浏览器] --> Next[Next.js /api/ask]
   Next --> Flask[Flask /ask]
+  Next --> Auth[FastAPI /auth/*]
   Flask --> RAG[QwenRagService]
   RAG --> FAISS[(FAISS chromastore)]
   RAG --> DS[DashScope Qwen]
+  Auth --> Redis[(Redis)]
+  Auth --> Postgres[(PostgreSQL)]
 ```
 
 LangGraph 实际流程图（由代码导出）：
@@ -146,7 +154,10 @@ npm run dev
 
 - `server`：Python Flask API（Gunicorn 监听 `5000`）
 - `webui`：Next.js 前端（通过 `FLASK_ASK_URL=http://server:5000/ask` 调用后端）
+- `loginserver`：FastAPI 登录服务（监听 `8000`，由 Nginx 通过 `/auth/*` 反代）
 - `nginx`：对外暴露 `80` 端口并反向代理到 `webui`
+- `redis`：验证码、会话、JWT 黑名单
+- `postgres`：会话持久化数据
 
 #### 4.1 本地 Compose（`docker-compose.yml`）
 
@@ -220,6 +231,62 @@ docker compose up -d
 
 ---
 
+## Login Server（认证服务）
+
+`loginserver` 是独立的 FastAPI 服务，负责邮箱验证码登录和会话管理，默认由 Nginx 通过同源路径 `/auth/*` 暴露给前端。
+
+### 主要能力
+
+- 邮箱验证码发送与校验（`/auth/send-code`、`/auth/login`）
+- 有状态会话（Redis 存会话，PostgreSQL 持久化会话）
+- JWT 登录模式（`/auth/jwt/login`）与黑名单退出（Redis）
+- 登录态查询与退出（会话模式 + JWT 模式）
+
+### 关键环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `REDIS_URL` | `redis://redis:6379/0` | Redis 连接地址 |
+| `PG_HOST` | `postgres` | PostgreSQL 主机 |
+| `PG_PORT` | `5432` | PostgreSQL 端口 |
+| `PG_USER` / `PG_PASSWORD` / `PG_DATABASE` | - | PostgreSQL 账号信息 |
+| `CODE_EXPIRE_SECONDS` | `60` | 验证码有效期（秒） |
+| `SESSION_EXPIRE_SECONDS` | `604800` | 会话 token 有效期（秒） |
+| `JWT_SECRET` | `replace-me-in-production` | JWT 签名密钥（生产必须覆盖） |
+| `JWT_ALGORITHM` | `HS256` | JWT 算法 |
+| `JWT_EXPIRE_SECONDS` | `7200` | JWT 有效期（秒） |
+| `ALLOWED_ORIGINS` | `*` | CORS 白名单（逗号分隔） |
+| `ENABLE_DEBUG_CODE` | `1` | 开发调试时可在响应中返回验证码（生产建议 `0`） |
+| `SMTP_*` / `MAIL_FROM` | 空 | 邮件发送配置（不配置则无法真实发信） |
+
+### 接口列表（`/auth`）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/auth/send-code` | 发送验证码（开发模式可返回 `code`） |
+| `POST` | `/auth/login` | 会话模式登录，返回 `token` |
+| `GET` | `/auth/me` | 会话模式查询当前用户 |
+| `POST` | `/auth/logout` | 会话模式退出登录 |
+| `POST` | `/auth/jwt/login` | JWT 模式登录，返回 `access_token` |
+| `GET` | `/auth/jwt/me` | JWT 模式查询当前用户 |
+| `POST` | `/auth/jwt/logout` | JWT 模式退出（加入黑名单） |
+| `GET` | `/health` | 服务健康检查 |
+
+请求鉴权：
+
+- 会话模式和 JWT 模式都使用 `Authorization: Bearer <token>`。
+- JWT 模式退出后，token 会写入 Redis 黑名单直到自然过期。
+
+### 本地单独启动（可选）
+
+```bash
+cd /path/to/llm/loginserver
+../.venv/bin/pip install -r requirements.txt
+../.venv/bin/uvicorn loginserver:app --host 0.0.0.0 --port 8000 --reload
+```
+
+---
+
 ## HTTP 接口摘要（Flask）
 
 | 方法 | 路径 | 说明 |
@@ -257,4 +324,5 @@ docker compose up -d
 
 ## 许可证与说明
 
-本仓库为个人/项目用途的集成示例；使用 DashScope、Ollama 等外部服务时，请遵守各平台条款与计费规则。
+本项目采用 `GPL-3.0-or-later` 开源协议，详见仓库根目录 `LICENSE`。
+使用 DashScope、Ollama 等外部服务时，请遵守各平台条款与计费规则。

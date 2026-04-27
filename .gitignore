@@ -27,6 +27,7 @@ webui/next-env.d.ts
 # 本地数据/生成目录
 server/chromastore/
 server/__pycache__/
+loginserver/__init__.py
 
 
 # 环境变量文件（包含密钥、数据库信息等）

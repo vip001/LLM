@@ -49,6 +49,7 @@ class DashScopeLLMClient:
             print(f"Using model: {model}")
             self._llm = ChatTongyi(
                 model=model,
+                streaming=True,
                 model_kwargs={"temperature": 0.7},
             )
         return self._llm
@@ -58,6 +59,7 @@ class DashScopeLLMClient:
             model = (os.getenv("DASHSCOPE_VL_MODEL") or _DEFAULT_VL_MODEL).strip()
             self._llm_vl = ChatTongyi(
                 model=model,
+                streaming=True,
                 model_kwargs={"temperature": 0.7},
             )
             _ensure_multimodal_conversation_client(self._llm_vl)

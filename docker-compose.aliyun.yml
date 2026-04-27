@@ -5,6 +5,9 @@ networks:
       config:
         - subnet: 172.28.240.0/24
 
+volumes:
+  loginserver_pg_data:
+
 services:
   server:
     image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-server:${IMAGE_TAG:-latest}
@@ -24,9 +27,13 @@ services:
     image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-webui:${IMAGE_TAG:-latest}
     container_name: llm-webui
     depends_on:
-      - server
+      server:
+        condition: service_started
+      loginserver:
+        condition: service_started
     environment:
       FLASK_ASK_URL: http://server:5000/ask
+      NEXT_PUBLIC_AUTH_BASE_URL: /auth
     expose:
       - "3000"
     restart: unless-stopped
@@ -34,14 +41,63 @@ services:
       llm_net:
         ipv4_address: 172.28.240.10
 
+  loginserver:
+    image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-loginserver:${IMAGE_TAG:-latest}
+    container_name: llm-loginserver
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      REDIS_SOCKET_PATH: ""
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: loginserver
+      PG_PASSWORD: loginserver
+      PG_DATABASE: loginserver
+      PG_SOCKET_DIR: ""
+      ALLOWED_ORIGINS: "*"
+      ENABLE_DEBUG_CODE: "1"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      llm_net:
+        ipv4_address: 172.28.240.12
+
+  redis:
+    image: docker.m.daocloud.io/library/redis:7-alpine
+    container_name: llm-login-redis
+    restart: unless-stopped
+    networks:
+      llm_net:
+        ipv4_address: 172.28.240.13
+
+  postgres:
+    image: docker.m.daocloud.io/library/postgres:16-alpine
+    container_name: llm-login-postgres
+    environment:
+      POSTGRES_USER: loginserver
+      POSTGRES_PASSWORD: loginserver
+      POSTGRES_DB: loginserver
+    volumes:
+      - loginserver_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      llm_net:
+        ipv4_address: 172.28.240.14
+
   nginx:
     image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-nginx:${IMAGE_TAG:-latest}
     container_name: llm-nginx
     depends_on:
+      - webui
+      - loginserver
       - server
     ports:
       - "80:80"
     volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/logs:/var/log/nginx
     restart: unless-stopped
     networks:

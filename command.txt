@@ -1,0 +1,32 @@
+redis-cli
+redis-server
+brew services start redis
+brew services start postgresql
+测试uds链接
+redis-cli -s /tmp/redis.sock ping
+验证是否安装 & 启动成功
+psql --version
+第一次连接数据库
+psql postgres
+启动fastapi
+uvicorn loginserver:app --host 0.0.0.0 --port 8000 --reload
+调试fastapi
+python -m debugpy --listen 5678 --wait-for-client -m uvicorn loginserver:app
+在 .vscode/launch.json 加一个 attach 配置
+   {
+     "version": "0.2.0",
+     "configurations": [
+       {
+         "name": "Python: Attach 5678",
+         "type": "python",
+         "request": "attach",
+         "connect": {
+           "host": "127.0.0.1",
+           "port": 5678
+         },
+         "justMyCode": false
+       }
+     ]
+   }
+在 Run and Debug 里选 Python: Attach 5678
+点启动调试即可

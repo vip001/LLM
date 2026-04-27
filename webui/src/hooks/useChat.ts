@@ -131,12 +131,12 @@ export function useChat() {
 
       await readRagStreamBody(reader, {
         onRefs: (contexts) => setRefs(contexts),
-        onAnswerDelta: (t) => {
+        onAnswerDelta: (delta) => {
           setMessages((m) => {
             const i = m.findIndex((x) => x.id === asstId);
             if (i === -1) return m;
             const copy = [...m];
-            copy[i] = { ...copy[i], content: t };
+            copy[i] = { ...copy[i], content: `${copy[i].content}${delta}` };
             return copy;
           });
         },

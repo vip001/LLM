@@ -43,6 +43,7 @@ fi
 
 WEBUI_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-webui:${IMAGE_TAG}"
 SERVER_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-server:${IMAGE_TAG}"
+LOGIN_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-loginserver:${IMAGE_TAG}"
 NGINX_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-nginx:${IMAGE_TAG}"
 
 # ECS is usually linux/amd64; Docker on Apple Silicon defaults to arm64 without --platform.
@@ -54,6 +55,9 @@ docker build --platform "${DOCKER_PLATFORM}" -f webui/Dockerfile -t "${WEBUI_IMA
 echo "Building ${SERVER_IMAGE} (${DOCKER_PLATFORM})"
 docker build --platform "${DOCKER_PLATFORM}" -f server/Dockerfile -t "${SERVER_IMAGE}" .
 
+echo "Building ${LOGIN_IMAGE} (${DOCKER_PLATFORM})"
+docker build --platform "${DOCKER_PLATFORM}" -f loginserver/Dockerfile -t "${LOGIN_IMAGE}" .
+
 echo "Building ${NGINX_IMAGE} (${DOCKER_PLATFORM})"
 docker build --platform "${DOCKER_PLATFORM}" -f nginx/Dockerfile -t "${NGINX_IMAGE}" .
 
@@ -62,6 +66,9 @@ docker push "${WEBUI_IMAGE}"
 
 echo "Pushing ${SERVER_IMAGE}"
 docker push "${SERVER_IMAGE}"
+
+echo "Pushing ${LOGIN_IMAGE}"
+docker push "${LOGIN_IMAGE}"
 
 echo "Pushing ${NGINX_IMAGE}"
 docker push "${NGINX_IMAGE}"
@@ -74,8 +81,10 @@ if [[ -n "${ALIYUN_HOST:-}" ]]; then
 
   REMOTE="${ALIYUN_USER}@${ALIYUN_HOST}"
   echo "Deploying to ${REMOTE}:${REMOTE_APP_DIR}"
-  ssh "${SSH_IDENTITY_ARGS[@]}" -p "${ALIYUN_PORT}" "${REMOTE}" "mkdir -p '${REMOTE_APP_DIR}'"
+  ssh "${SSH_IDENTITY_ARGS[@]}" -p "${ALIYUN_PORT}" "${REMOTE}" \
+    "mkdir -p '${REMOTE_APP_DIR}/nginx' '${REMOTE_APP_DIR}/nginx/logs'"
   scp "${SSH_IDENTITY_ARGS[@]}" -P "${ALIYUN_PORT}" docker-compose.aliyun.yml "${REMOTE}:${REMOTE_APP_DIR}/docker-compose.yml"
+  scp "${SSH_IDENTITY_ARGS[@]}" -P "${ALIYUN_PORT}" nginx/default.conf "${REMOTE}:${REMOTE_APP_DIR}/nginx/default.conf"
   ssh "${SSH_IDENTITY_ARGS[@]}" -p "${ALIYUN_PORT}" "${REMOTE}" \
     "cd '${REMOTE_APP_DIR}' && \
      ACR_REGISTRY='${ACR_REGISTRY}' ACR_NAMESPACE='${ACR_NAMESPACE}' IMAGE_TAG='${IMAGE_TAG}' \
