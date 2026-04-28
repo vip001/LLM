@@ -57,7 +57,6 @@ llm/
 3. **检索与守卫**：支持文本/向量检索两条路径，`retrieval_guard` 在无上下文时快速拒答，避免无依据生成。
 4. **生成与自检**：`generate` 负责组装消息并调用 `DashScopeLLMClient`，`self_check` 按置信度触发一次回退重试（HyDE 自动回退 `query2doc`）。
 5. **前端**：浏览器只访问 Next.js；`POST /api/ask` 由 Route Handler 转发到 Flask `POST /ask`，并透传流式 body。
-4. **前端**：浏览器只访问 Next.js；`POST /api/ask` 由 Route Handler 转发到 Flask `POST /ask`，并透传流式 body。
 
 ```mermaid
 flowchart LR
@@ -318,6 +317,7 @@ cd /path/to/llm/loginserver
 
 ## 历史版本说明
 
+- **v1.1.0**：新增 **用户登录**（`loginserver` FastAPI：邮箱验证码、会话/JWT，依赖 Redis 与 PostgreSQL；前端登录/登出与导航整合见 `webui`）；RAG 侧引入 **LangGraph** 进行图编排（`server/rag_graph.py` 中 `StateGraph`：检索、守卫、自检与重试等节点），替代此前仅基于 LangChain 链式组装的流程。
 - **v1.0.0**：RAG 流程基于 **LangChain** 实现。
 
 ---

@@ -2,6 +2,7 @@
 
 import { type MouseEvent, useEffect, useState } from "react";
 import { LoginModal } from "./LoginModal";
+import { LogoutConfirmModal } from "./LogoutConfirmModal";
 
 const AUTH_BASE_URL = process.env.NEXT_PUBLIC_AUTH_BASE_URL?.trim() || "/auth";
 const AUTH_TOKEN_KEY = "auth_token";
@@ -9,6 +10,8 @@ const USER_EMAIL_KEY = "auth_user_email";
 
 export function AppNav() {
   const [loginOpen, setLoginOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
 
@@ -49,13 +52,20 @@ export function AppNav() {
     localStorage.setItem(USER_EMAIL_KEY, payload.email);
   };
 
-  const handleAuthAction = async (event: MouseEvent<HTMLAnchorElement>) => {
+  const handleAuthAction = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     if (!token) {
       setLoginOpen(true);
       return;
     }
+    setLogoutConfirmOpen(true);
+  };
 
+  const performLogout = async () => {
+    if (!token || loggingOut) {
+      return;
+    }
+    setLoggingOut(true);
     try {
       await fetch(`${AUTH_BASE_URL}/logout`, {
         method: "POST",
@@ -64,11 +74,19 @@ export function AppNav() {
         },
       });
     } finally {
+      setLoggingOut(false);
       setToken("");
       setEmail("");
       localStorage.removeItem(AUTH_TOKEN_KEY);
       localStorage.removeItem(USER_EMAIL_KEY);
       setLoginOpen(false);
+      setLogoutConfirmOpen(false);
+    }
+  };
+
+  const closeLogoutConfirm = () => {
+    if (!loggingOut) {
+      setLogoutConfirmOpen(false);
     }
   };
 
@@ -118,6 +136,13 @@ export function AppNav() {
         open={loginOpen}
         onClose={() => setLoginOpen(false)}
         onLoginSuccess={handleLoginSuccess}
+      />
+
+      <LogoutConfirmModal
+        open={logoutConfirmOpen}
+        loggingOut={loggingOut}
+        onClose={closeLogoutConfirm}
+        onConfirm={performLogout}
       />
     </>
   );
