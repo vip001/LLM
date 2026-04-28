@@ -1,21 +1,19 @@
 import type { RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage, RagContextItem } from "../../types/chat";
+import type { ChatMessage } from "../../types/chat";
 import { markdownBubbleClass } from "../../lib/chat/constants";
 import { RefSources } from "./RefSources";
 
 type ChatMessagesProps = {
   messages: ChatMessage[];
   loading: boolean;
-  refs: RagContextItem[];
   messagesScrollRef: RefObject<HTMLDivElement | null>;
 };
 
 export function ChatMessages({
   messages,
   loading,
-  refs,
   messagesScrollRef,
 }: ChatMessagesProps) {
   return (
@@ -37,30 +35,32 @@ export function ChatMessages({
         const isLast = msg.id === messages[messages.length - 1]?.id;
         const showTyping = loading && isLast && !msg.content;
         return (
-          <div
-            key={msg.id}
-            className="self-start max-w-[70%] px-4 py-3 rounded-xl bg-[#f0f7ff] text-[#333] leading-relaxed"
-          >
-            {showTyping ? (
-              <span className="text-[#666] text-sm">正在生成回答…</span>
-            ) : (
-              <div className={markdownBubbleClass}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {msg.content}
-                </ReactMarkdown>
-                {loading && isLast && (
-                  <span
-                    className="inline-block w-0.5 h-4 ml-0.5 bg-[#0066cc] animate-pulse align-middle"
-                    aria-hidden
-                  />
-                )}
+          <div key={msg.id} className="self-start max-w-[70%]">
+            <div className="px-4 py-3 rounded-xl bg-[#f0f7ff] text-[#333] leading-relaxed">
+              {showTyping ? (
+                <span className="text-[#666] text-sm">正在生成回答…</span>
+              ) : (
+                <div className={markdownBubbleClass}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {msg.content}
+                  </ReactMarkdown>
+                  {loading && isLast && (
+                    <span
+                      className="inline-block w-0.5 h-4 ml-0.5 bg-[#0066cc] animate-pulse align-middle"
+                      aria-hidden
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+            {msg.refs && msg.refs.length > 0 && !(loading && isLast) && (
+              <div className="mt-3">
+                <RefSources refs={msg.refs} />
               </div>
             )}
           </div>
         );
       })}
-
-      {refs.length > 0 && !loading && <RefSources refs={refs} />}
     </div>
   );
 }

@@ -16,7 +16,6 @@ export function ChatHome() {
     setQuery,
     loading,
     error,
-    refs,
     saveHint,
     messagesScrollRef,
     clearChat,
@@ -51,7 +50,6 @@ export function ChatHome() {
           <ChatMessages
             messages={messages}
             loading={loading}
-            refs={refs}
             messagesScrollRef={messagesScrollRef}
           />
 

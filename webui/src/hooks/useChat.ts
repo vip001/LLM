@@ -6,7 +6,7 @@ import {
   useEffect,
   FormEvent,
 } from "react";
-import type { ChatMessage, RagContextItem } from "../types/chat";
+import type { ChatMessage } from "../types/chat";
 import { SIDEBAR_CHATS, WELCOME_TEXT } from "../lib/chat/constants";
 import { parseErrorBody } from "../lib/chat/utils";
 import { readRagStreamBody } from "../lib/ragStream";
@@ -20,7 +20,6 @@ export function useChat() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [refs, setRefs] = useState<RagContextItem[]>([]);
   const [saveHint, setSaveHint] = useState(false);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
 
@@ -31,11 +30,10 @@ export function useChat() {
       top: el.scrollHeight,
       behavior: loading ? "auto" : "smooth",
     });
-  }, [messages, loading, refs]);
+  }, [messages, loading]);
 
   function resetChat() {
     setMessages([{ id: "welcome", role: "assistant", content: WELCOME_TEXT }]);
-    setRefs([]);
     setError(null);
     setChatTitle("新对话");
     setActiveSidebarId("new");
@@ -72,7 +70,6 @@ export function useChat() {
     if (!q || loading) return;
 
     setError(null);
-    setRefs([]);
 
     const userId =
       typeof crypto !== "undefined" && crypto.randomUUID
@@ -130,7 +127,15 @@ export function useChat() {
       }
 
       await readRagStreamBody(reader, {
-        onRefs: (contexts) => setRefs(contexts),
+        onRefs: (contexts) => {
+          setMessages((m) => {
+            const i = m.findIndex((x) => x.id === asstId);
+            if (i === -1) return m;
+            const copy = [...m];
+            copy[i] = { ...copy[i], refs: contexts };
+            return copy;
+          });
+        },
         onAnswerDelta: (delta) => {
           setMessages((m) => {
             const i = m.findIndex((x) => x.id === asstId);
@@ -157,7 +162,6 @@ export function useChat() {
     setQuery,
     loading,
     error,
-    refs,
     saveHint,
     messagesScrollRef,
     clearChat,
