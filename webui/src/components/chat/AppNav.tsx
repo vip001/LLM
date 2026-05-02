@@ -1,10 +1,11 @@
 "use client";
 
 import { type MouseEvent, useEffect, useState } from "react";
+import { AUTH_BASE_URL } from "../../lib/authBaseUrl";
 import { LoginModal } from "./LoginModal";
 import { LogoutConfirmModal } from "./LogoutConfirmModal";
+import { UserNavMenu } from "./UserNavMenu";
 
-const AUTH_BASE_URL = process.env.NEXT_PUBLIC_AUTH_BASE_URL?.trim() || "/auth";
 const AUTH_TOKEN_KEY = "auth_token";
 const USER_EMAIL_KEY = "auth_user_email";
 
@@ -14,7 +15,6 @@ export function AppNav() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
-
   useEffect(() => {
     const storedToken = localStorage.getItem(AUTH_TOKEN_KEY);
     const storedEmail = localStorage.getItem(USER_EMAIL_KEY);
@@ -56,9 +56,7 @@ export function AppNav() {
     event.preventDefault();
     if (!token) {
       setLoginOpen(true);
-      return;
     }
-    setLogoutConfirmOpen(true);
   };
 
   const performLogout = async () => {
@@ -93,22 +91,22 @@ export function AppNav() {
   return (
     <>
       <nav className="shrink-0 flex items-center justify-between px-[5%] py-4 bg-white border-b border-[#e5e5e5] z-100">
-        <div className="text-xl font-bold text-[#0066cc]">AI助手</div>
-        <ul className="flex  list-none  gap-8 m-0 p-0">
-          {email && (
-            <li className="text-[#666] text-sm max-w-[240px] truncate" title={email}>
-              {email}
+        <div className="text-xl font-bold text-[#0066cc]">Android黄金屋社区</div>
+        <ul className="flex  list-none  gap-8 m-0 p-0 items-center">
+          {token ? (
+            <UserNavMenu email={email} onRequestLogout={() => setLogoutConfirmOpen(true)} />
+          ) : null}
+          {!token ? (
+            <li>
+              <a
+                href="#"
+                className="no-underline text-[#333] font-medium hover:text-[#0066cc] transition-colors"
+                onClick={handleAuthAction}
+              >
+                登录
+              </a>
             </li>
-          )}
-          <li>
-            <a
-              href="#"
-              className="no-underline text-[#333] font-medium hover:text-[#0066cc] transition-colors"
-              onClick={handleAuthAction}
-            >
-              {token ? "退出登录" : "登录"}
-            </a>
-          </li>
+          ) : null}
           <li>
             <a
               href="#"
@@ -117,7 +115,7 @@ export function AppNav() {
                 e.preventDefault();
               }}
             >
-              功能
+              社区
             </a>
           </li>
           <li>

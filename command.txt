@@ -9,7 +9,7 @@ psql --version
 第一次连接数据库
 psql postgres
 启动fastapi
-uvicorn loginserver:app --host 0.0.0.0 --port 8000 --reload
+uvicorn loginserver:app --host 0.0.0.0 --port 5000 --reload
 调试fastapi
 python -m debugpy --listen 5678 --wait-for-client -m uvicorn loginserver:app
 在 .vscode/launch.json 加一个 attach 配置

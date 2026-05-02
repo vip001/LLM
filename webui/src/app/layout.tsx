@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI助手",
-  description: "基于本地 RAG 的问答界面",
+  title: "Android黄金屋社区",
+  description: "基于RAG的Android问答社区",
 };
 
 export default function RootLayout({

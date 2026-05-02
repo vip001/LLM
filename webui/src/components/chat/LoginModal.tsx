@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AUTH_BASE_URL } from "../../lib/authBaseUrl";
 
 type LoginModalProps = {
   open: boolean;
@@ -10,8 +11,6 @@ type LoginModalProps = {
 
 const COUNTDOWN_SECONDS = 60;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const AUTH_BASE_URL = process.env.NEXT_PUBLIC_AUTH_BASE_URL?.trim() || "/auth";
 
 type SendCodeResponse = {
   message: string;
