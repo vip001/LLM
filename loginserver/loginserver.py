@@ -1,6 +1,7 @@
 import os
 import re
 import secrets
+from contextlib import asynccontextmanager
 import smtplib
 import logging
 from datetime import datetime, timedelta, timezone
@@ -19,22 +20,26 @@ logging.basicConfig(
 
 try:
     # Package import when running from project root: uvicorn loginserver:app
-    from .postgres_store import (
+    from llm_common.postgres_store import init_postgres
+    from .login_dao import (
         delete_login_session_by_token,
         get_login_session_by_token,
-        init_postgres,
         save_login_session,
     )
     from .redis_store import code_key, jwt_blacklist_key, redis_client, session_key
+
+    _PG_ENSURE_MODELS: tuple[str, ...] = ("loginserver.login_dao",)
 except ImportError:
     # Module import when running inside loginserver directory: uvicorn loginserver:app
-    from postgres_store import (
+    from llm_common.postgres_store import init_postgres
+    from login_dao import (
         delete_login_session_by_token,
         get_login_session_by_token,
-        init_postgres,
         save_login_session,
     )
     from redis_store import code_key, jwt_blacklist_key, redis_client, session_key
+
+    _PG_ENSURE_MODELS = ("login_dao",)
 
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 CODE_EXPIRE_SECONDS = int(os.getenv("CODE_EXPIRE_SECONDS", "60"))
@@ -50,7 +55,15 @@ JWT_SECRET = os.getenv("JWT_SECRET", "replace-me-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_SECONDS = int(os.getenv("JWT_EXPIRE_SECONDS", "7200"))
 
-app = FastAPI(title="Login Server", version="1.0.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    await redis_client.ping()
+    await init_postgres(ensure_models=_PG_ENSURE_MODELS)
+    yield
+
+
+app = FastAPI(title="Login Server", version="1.0.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -176,12 +189,6 @@ def decode_jwt_token(token: str) -> dict:
             detail="JWT 缺少用户标识",
         )
     return payload
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    await redis_client.ping()
-    await init_postgres()
 
 
 @app.get("/health")

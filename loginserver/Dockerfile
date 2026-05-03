@@ -5,11 +5,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY loginserver/requirements.txt ./requirements.txt
+COPY llm_common ./llm_common
+COPY loginserver/requirements.txt ./loginserver/requirements.txt
 RUN pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
     --trusted-host pypi.tuna.tsinghua.edu.cn \
-    -r requirements.txt
+    -r loginserver/requirements.txt
 
 COPY loginserver/ ./loginserver/
 

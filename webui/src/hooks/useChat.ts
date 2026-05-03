@@ -1,17 +1,25 @@
 "use client";
 
 import {
+  createContext,
+  createElement,
+  useContext,
   useState,
   useRef,
   useEffect,
   FormEvent,
+  type ReactNode,
 } from "react";
 import type { ChatMessage } from "../types/chat";
 import { SIDEBAR_CHATS, WELCOME_TEXT } from "../lib/chat/constants";
 import { parseErrorBody } from "../lib/chat/utils";
 import { readRagStreamBody } from "../lib/ragStream";
 
-export function useChat() {
+type ChatContextValue = ReturnType<typeof useChatState>;
+
+const ChatContext = createContext<ChatContextValue | null>(null);
+
+function useChatState() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: "welcome", role: "assistant", content: WELCOME_TEXT },
   ]);
@@ -169,4 +177,17 @@ export function useChat() {
     selectSidebar,
     onSubmit,
   };
+}
+
+export function ChatProvider({ children }: { children: ReactNode }) {
+  const value = useChatState();
+  return createElement(ChatContext.Provider, { value }, children);
+}
+
+export function useChat(): ChatContextValue {
+  const v = useContext(ChatContext);
+  if (!v) {
+    throw new Error("useChat must be used within ChatProvider");
+  }
+  return v;
 }

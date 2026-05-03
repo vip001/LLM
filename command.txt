@@ -9,7 +9,7 @@ psql --version
 第一次连接数据库
 psql postgres
 启动fastapi
-uvicorn loginserver:app --host 0.0.0.0 --port 5000 --reload
+uvicorn loginserver:app --host 0.0.0.0 --port 8000 --reload
 调试fastapi
 python -m debugpy --listen 5678 --wait-for-client -m uvicorn loginserver:app
 在 .vscode/launch.json 加一个 attach 配置
@@ -30,3 +30,11 @@ python -m debugpy --listen 5678 --wait-for-client -m uvicorn loginserver:app
    }
 在 Run and Debug 里选 Python: Attach 5678
 点启动调试即可
+
+mcpserver
+python -m llm_mcpserver.mcpserver
+client
+pip install langchain-mcp-adapters
+
+postgresql
+psql -h 127.0.0.1 -p 5432 -U xiafeng -d postgres -c "\dt"

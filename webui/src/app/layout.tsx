@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ChatProvider } from "../hooks/useChat";
 
 export const metadata: Metadata = {
   title: "Android黄金屋社区",
@@ -11,11 +12,10 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  
   return (
     <html lang="zh-CN">
       <body className="antialiased h-dvh min-h-0 overflow-hidden font-sans">
-        {children}
+        <ChatProvider>{children}</ChatProvider>
       </body>
     </html>
   );

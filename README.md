@@ -26,7 +26,7 @@ llm/
 │   ├── qwen_rag_service.py # 检索、消息构造、调用 DashScope LLM
 │   ├── rag_graph.py        # LangGraph RAG 流程编排（含 guard/self-check/retry）
 │   ├── dashscope_llm.py    # 百炼客户端封装
-│   ├── vector_db.py        # FAISS 向量库封装（默认 chromastore）
+│   ├── vector_db.py        # FAISS 向量库封装（默认 vectorstore）
 │   ├── embedding_provider.py # 嵌入模型选择与缓存
 │   ├── pdf_to_chroma.py    # PDF 解析、分块、写入向量库
 │   ├── query_enhance.py    # 查询增强策略
@@ -45,14 +45,14 @@ llm/
 ├── server/requirements.txt # Python 依赖
 ├── .env                    # 密钥与模型配置（需自行创建，勿提交）
 ├── pdf/                    # 待入库 PDF（按需创建）
-└── server/chromastore/     # FAISS 持久化目录（运行 pdf 脚本后生成）
+└── server/vectorstore/     # FAISS 持久化目录（运行 pdf 脚本后生成）
 ```
 
 ---
 
 ## 架构说明
 
-1. **数据面**：`pdf_to_chroma.py` 读取 `pdf/` 下文档，分块（含语义分块等）后，用 `EmbeddingProvider` 指定模型做向量，写入 `server/chromastore`（FAISS）。
+1. **数据面**：`pdf_to_chroma.py` 读取 `pdf/` 下文档，分块（含语义分块等）后，用 `EmbeddingProvider` 指定模型做向量，写入 `server/vectorstore`（FAISS）。
 2. **流程编排**：`QwenRagService` 基于 `rag_graph.py` 构建 LangGraph，节点顺序为：`prepare -> enhance_query -> retrieve -> retrieval_guard -> generate -> self_check -> (retry|finalize)`。
 3. **检索与守卫**：支持文本/向量检索两条路径，`retrieval_guard` 在无上下文时快速拒答，避免无依据生成。
 4. **生成与自检**：`generate` 负责组装消息并调用 `DashScopeLLMClient`，`self_check` 按置信度触发一次回退重试（HyDE 自动回退 `query2doc`）。
@@ -64,7 +64,7 @@ flowchart LR
   Next --> Flask[Flask /ask]
   Next --> Auth[FastAPI /auth/*]
   Flask --> RAG[QwenRagService]
-  RAG --> FAISS[(FAISS chromastore)]
+  RAG --> FAISS[(FAISS vectorstore)]
   RAG --> DS[DashScope Qwen]
   Auth --> Redis[(Redis)]
   Auth --> Postgres[(PostgreSQL)]
@@ -97,7 +97,7 @@ python -m venv .venv
 
 ### 向量库与嵌入
 
-- **入库**：配置好 `.env` 与 `pdf/` 后执行 `pdf_to_chroma` 相关流程（见该文件顶部说明），生成 `server/chromastore`。
+- **入库**：配置好 `.env` 与 `pdf/` 后执行 `pdf_to_chroma` 相关流程（见该文件顶部说明），生成 `server/vectorstore`。
 - **嵌入**：默认逻辑见 `embedding_provider.py`（如 DashScope `tongyi-embedding-vision-plus` 或 Ollama 模型名）；若用 Ollama，需本机运行并 `ollama pull` 对应嵌入模型。
 
 ### 前端
@@ -164,7 +164,7 @@ npm run dev
 
 - 根目录存在 `.env`，且至少配置 `DASHSCOPE_API_KEY`
 - 待入库文档放在 `server/pdf/`
-- 首次运行若无向量库，可在容器中执行入库脚本生成 `server/chromastore/`
+- 首次运行若无向量库，可在容器中执行入库脚本生成 `server/vectorstore/`
 
 启动与查看日志：
 

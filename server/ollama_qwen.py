@@ -1,8 +1,8 @@
 """
 使用阿里云百炼 DashScope 的 Qwen 对话模型，通过 Flask 提供 RAG 问答 API。
-对话与检索逻辑见 qwen_rag_service.QwenRagService，DashScope 客户端见 dashscope_llm.DashScopeLLMClient。
+对话与检索逻辑见 llm_common.rag.qwen_rag_service.QwenRagService，DashScope 客户端见 llm_common.rag.dashscope_llm.DashScopeLLMClient。
 
-运行方式（在 server 目录下执行，以便正确 import vector_db 等模块）：
+运行方式（需已安装共享包：pip install -e ../llm_common；可在 server 目录下启动）：
   cd /Users/xiafeng/PythonProject/llm/server
   ../.venv/bin/python ollama_qwen.py
   启动 HTTP：../.venv/bin/python ollama_qwen.py serve
@@ -31,16 +31,10 @@ import time
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-
 from flask import Flask, request, jsonify, Response
 from typing import Any
 
-from qwen_rag_service import QwenRagService
+from llm_common.rag.qwen_rag_service import QwenRagService
 
 _rag = QwenRagService()
 

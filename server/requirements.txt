@@ -1,3 +1,6 @@
+# Shared RAG / vector code (install from repo root: pip install -r server/requirements.txt)
+-e ../llm_common
+
 # API 服务
 flask>=3.0.0
 gunicorn>=23.0.0

@@ -1,8 +1,8 @@
 """
-使用 LangChain 解析工程根目录下 pdf 文件夹的 PDF，存入向量库（持久化到 chromastore）。
+使用 LangChain 解析工程根目录下 pdf 文件夹的 PDF，存入向量库（持久化到 vectorstore）。
 
 - PDF 目录：项目根目录/pdf
-- 向量库目录：项目根目录/chromastore（持久化）
+- 向量库目录：与 ``PathsUtil.get_vectorstore_dir()`` 一致（本地为 server/vectorstore，Docker 为 /app/server/vectorstore）
 - 嵌入模型：通过 EmbeddingProvider 获取（默认 tongyi-embedding-vision-plus 多模态，支持图文向量化）
 - 分块策略：混合分块（递归粗分 + 长块语义细分）
 - 图片：从每页提取图片，携带该页文字作为上下文，用多模态模型做「图文融合」向量后入库，检索时可同时命中文本与图片
@@ -25,16 +25,17 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 from pypdf._page import PageObject
 
-from embedding_provider import (
+from llm_common.paths import PathsUtil
+from llm_common.rag.embedding_provider import (
     EmbeddingProvider,
     DashScopeMultimodalEmbeddings,
 )
-from vector_db import VectorDB
+from llm_common.rag.vector_db import VectorDB
 
-# 路径：相对项目根目录（脚本建议在根目录运行）
+# 路径：PDF 在 server/pdf；向量库与 VectorDB 一致，由 PathsUtil 解析（含 Docker）
 PROJECT_ROOT = Path(__file__).resolve().parent
 PDF_DIR = PROJECT_ROOT / "pdf"
-STORE_DIR = PROJECT_ROOT / "chromastore"
+STORE_DIR = PathsUtil.get_vectorstore_dir()
 MANIFEST_PATH = STORE_DIR / "pdf_manifest.json"
 
 # 分块与嵌入（使用 EmbeddingProvider 默认模型，见 embedding_provider.EMBED_MODEL_QWEN）
@@ -244,7 +245,7 @@ def main() -> None:
     embedding_model = provider.get_embeddings()
 
     # 2. 初始化向量数据库（force_new=True 表示每次运行替换旧数据）
-    vector_db = VectorDB(store_path=STORE_DIR, embeddings=embedding_model, force_new=True)
+    vector_db = VectorDB(embeddings=embedding_model, force_new=True)
 
     # 3. 递归粗分
     recursive_splitter = RecursiveCharacterTextSplitter(

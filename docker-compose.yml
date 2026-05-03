@@ -19,7 +19,7 @@ services:
     expose:
       - "5000"
     volumes:
-      - ./server/chromastore:/app/server/chromastore
+      - ./server/vectorstore:/app/server/vectorstore
       - ./server/pdf:/app/server/pdf
     restart: unless-stopped
     networks:
