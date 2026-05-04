@@ -4,7 +4,7 @@
 策略模式：
 - Query2Doc：根据问题生成「假设的文档片段」，与原始 query 拼接成文本后做检索（文本 → 由检索器嵌入再查）。
 - HyDE (Hypothetical Document Embeddings)：先用 LLM 根据问题生成「假设答案文档」，
-  再对假设文档做嵌入；可选与 query 的嵌入取平均。用得到的向量做相似度检索（by vector）。
+  再对假设文档做嵌入，并与 query 的嵌入取平均。用得到的向量做相似度检索（by vector）。
 
 使用方式：
     from query_enhance import get_strategy, RetrievalInput
@@ -54,16 +54,6 @@ class QueryEnhanceStrategy(ABC):
         """
         pass
 
-    def enhance(self, query: str) -> str:
-        """
-        仅对「返回文本」的策略有效：返回增强后的检索文本。
-        HyDE 策略请使用 get_retrieval_input，不要依赖本方法做检索。
-        """
-        inp = self.get_retrieval_input(query)
-        if inp.text is not None:
-            return inp.text
-        raise NotImplementedError("该策略使用向量检索，请使用 get_retrieval_input 并配合 search_by_vector")
-
 
 class Query2DocStrategy(QueryEnhanceStrategy):
     """
@@ -94,16 +84,13 @@ class Query2DocStrategy(QueryEnhanceStrategy):
         print(f"Query2Doc: {text}")
         return RetrievalInput(text=text)
 
-    def enhance(self, query: str) -> str:
-        return self.get_retrieval_input(query).text or query
-
 
 class HyDEStrategy(QueryEnhanceStrategy):
     """
     HyDE (Hypothetical Document Embeddings) 策略：
     1) 用 LLM 根据问题生成「假设的答案文档」；
     2) 用 base_embeddings 对假设文档做嵌入得到 hyde_embedding；
-    3) 若 include_query=True，则对原始 query 做嵌入，与 hyde_embedding 取平均作为最终检索向量；
+    3) 对原始 query 做嵌入，与 hyde_embedding 取平均作为最终检索向量；
     4) 用该向量做 similarity_search_by_vector，而非文本检索。
     """
 
@@ -111,11 +98,9 @@ class HyDEStrategy(QueryEnhanceStrategy):
         self,
         llm: BaseChatModel,
         base_embeddings: Embeddings,
-        include_query: bool = True,
     ) -> None:
         self._llm = llm
         self._base_embeddings = base_embeddings
-        self._include_query = include_query
         self._prompt = ChatPromptTemplate.from_messages([
             (
                 "system",
@@ -138,18 +123,15 @@ class HyDEStrategy(QueryEnhanceStrategy):
             return RetrievalInput(embedding=vec)
 
         hyde_embedding = self._base_embeddings.embed_query(hypo_doc)
-        if self._include_query:
-            query_embedding = self._base_embeddings.embed_query(query)
-            try:
-                import numpy as np
-                result = (np.array(query_embedding) + np.array(hyde_embedding)) / 2.0
-                embedding = result.tolist()
-            except ImportError:
-                embedding = [
-                    (q + h) / 2.0 for q, h in zip[tuple[float, float]](query_embedding, hyde_embedding)
-                ]
-        else:
-            embedding = hyde_embedding
+        query_embedding = self._base_embeddings.embed_query(query)
+        try:
+            import numpy as np
+            result = (np.array(query_embedding) + np.array(hyde_embedding)) / 2.0
+            embedding = result.tolist()
+        except ImportError:
+            embedding = [
+                (q + h) / 2.0 for q, h in zip[tuple[float, float]](query_embedding, hyde_embedding)
+            ]
         return RetrievalInput(embedding=embedding)
 
 
@@ -161,7 +143,6 @@ def get_strategy(
     name: str | StrategyName = _DEFAULT_STRATEGY,
     llm: BaseChatModel | None = None,
     base_embeddings: Embeddings | None = None,
-    include_query: bool = True,
 ) -> QueryEnhanceStrategy:
     """
     根据名称返回对应的查询增强策略实例。
@@ -169,8 +150,7 @@ def get_strategy(
     Args:
         name: 策略名称，"query2doc" | "hyde"
         llm: 用于生成假设文档/答案的 LLM，由调用方注入
-        base_embeddings: 用于 HyDE 的嵌入模型（对假设文档与可选 query 做嵌入），仅 hyde 需要
-        include_query: 仅 HyDE 有效，是否将 query 嵌入与假设文档嵌入取平均
+        base_embeddings: 用于 HyDE 的嵌入模型（对假设文档与 query 做嵌入并取平均），仅 hyde 需要
 
     Returns:
         查询增强策略实例
@@ -186,5 +166,5 @@ def get_strategy(
     if n == "hyde":
         if base_embeddings is None:
             raise ValueError("HyDE 策略需要传入 base_embeddings 参数（与向量库使用同一嵌入模型）")
-        return HyDEStrategy(llm, base_embeddings, include_query=include_query)
+        return HyDEStrategy(llm, base_embeddings)
     raise ValueError(f"不支持的查询增强策略: {name!r}，可选: query2doc, hyde")

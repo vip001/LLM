@@ -342,7 +342,6 @@ class QwenRagService:
         self,
         query: str,
         k: int = 4,
-        enhance_strategy: str = "query2doc",
         trace: bool = False,
     ) -> dict[str, Any]:
         if self._graph is None:
@@ -351,7 +350,6 @@ class QwenRagService:
             {
                 "query": query,
                 "k": k,
-                "enhance_strategy": enhance_strategy,
                 "max_retries": 1,
             }
         )
@@ -370,7 +368,6 @@ class QwenRagService:
         retrieval_embedding = result.get("retrieval_embedding")
         retrieval_mode = "vector" if retrieval_embedding is not None else "text"
         return {
-            "enhance_strategy": result.get("enhance_strategy"),
             "retrieval_mode": retrieval_mode,
             "retrieval_text": result.get("retrieval_text", ""),
             "contexts_count": len(contexts),
@@ -386,7 +383,6 @@ class QwenRagService:
         self,
         query: str,
         k: int = 4,
-        enhance_strategy: str = "query2doc",
         trace: bool = False,
     ) -> tuple[list[dict[str, Any]], Iterator[Any], dict[str, Any] | None]:
         """
@@ -402,7 +398,6 @@ class QwenRagService:
             {
                 "query": query,
                 "k": k,
-                "enhance_strategy": enhance_strategy,
                 "max_retries": 1,
                 "stream": True,
             }

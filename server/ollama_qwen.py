@@ -9,9 +9,7 @@
 
 API 使用：
   GET  /ask?query=MMKV的用法
-  GET  /ask?query=MMKV的用法&strategy=hyde   # 查询增强策略：query2doc（默认）| hyde
   POST /ask   Body: {"query": "MMKV的用法"}
-  POST /ask   Body: {"query": "MMKV的用法", "strategy": "hyde"}
 
 前置条件：
 1. pip 已安装 dashscope、langchain-community（见 server/requirements.txt）
@@ -113,16 +111,11 @@ class AskHttpController:
         body: dict[str, Any] = {}
         if request.method == "GET":
             query = request.args.get("query", "").strip()
-            strategy = request.args.get("strategy", "query2doc").strip() or "query2doc"
-            stream = _parse_stream_flag(request.arygs.get("stream"), default=True)
+            stream = _parse_stream_flag(request.args.get("stream"), default=True)
             trace = _parse_trace_flag(request.args.get("trace"), default=False)
         else:
             body = request.get_json(silent=True) or {}
             query = (body.get("query") or "").strip()
-            strategy = (
-                (body.get("strategy") or body.get("enhance_strategy") or "query2doc").strip()
-                or "query2doc"
-            )
             stream = _parse_stream_flag(body.get("stream"), default=True)
             trace = _parse_trace_flag(body.get("trace"), default=False)
 
@@ -131,7 +124,7 @@ class AskHttpController:
         try:
             if stream:
                 contexts, stream_gen, trace_data = self._rag.ask_stream(
-                    query, enhance_strategy=strategy, trace=trace
+                    query, trace=trace
                 )
                 refs_payload = {"contexts": contexts}
                 if trace and trace_data is not None:
@@ -156,7 +149,7 @@ class AskHttpController:
                     mimetype="application/octet-stream",
                 )
             print(f"rag askOnce: {query}")
-            return jsonify(self._rag.ask_once(query, enhance_strategy=strategy, trace=trace))
+            return jsonify(self._rag.ask_once(query, trace=trace))
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except RuntimeError as e:

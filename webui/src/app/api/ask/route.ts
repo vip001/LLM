@@ -44,9 +44,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const query = (body?.query ?? "").trim();
     const stream = body?.stream ?? true;
-    const strategy =
-      (body?.strategy ?? body?.enhance_strategy ?? "query2doc").toString().trim() ||
-      "query2doc";
     if (!query) {
       return Response.json(
         errPayload("MISSING_QUERY", "缺少参数 query"),
@@ -60,7 +57,7 @@ export async function POST(request: NextRequest) {
       res = await fetch(target, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, stream, strategy }),
+        body: JSON.stringify({ query, stream }),
       });
     } catch (fetchErr) {
       const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);

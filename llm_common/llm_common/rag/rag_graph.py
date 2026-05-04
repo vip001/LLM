@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage
 from langgraph.graph import END, START, StateGraph
 
-from llm_common.rag.query_enhance import get_strategy
+from llm_common.rag.query_enhance_agent import QueryEnhanceToolAgent
 
 if TYPE_CHECKING:
     from llm_common.rag.qwen_rag_service import QwenRagService
@@ -14,7 +15,6 @@ if TYPE_CHECKING:
 class RagState(TypedDict, total=False):
     query: str
     k: int
-    enhance_strategy: str
     max_retries: int
     retry_count: int
     stream: bool
@@ -33,11 +33,12 @@ class RagState(TypedDict, total=False):
 
 
 def build_rag_graph(service: "QwenRagService"):
+    enhance_agent = QueryEnhanceToolAgent.from_rag_service(service)
+
     def prepare_node(state: RagState) -> RagState:
         return {
             "query": (state.get("query") or "").strip(),
             "k": int(state.get("k", 4)),
-            "enhance_strategy": (state.get("enhance_strategy") or "query2doc").strip().lower(),
             "max_retries": int(state.get("max_retries", 1)),
             "retry_count": int(state.get("retry_count", 0)),
             "stream": bool(state.get("stream", False)),
@@ -47,22 +48,17 @@ def build_rag_graph(service: "QwenRagService"):
         }
 
     def enhance_query_node(state: RagState) -> RagState:
-        strategy_name = state.get("enhance_strategy") or "query2doc"
-        strategy = get_strategy(
-            strategy_name,
-            llm=service.get_text_llm_for_strategy(),
-            base_embeddings=service.get_embeddings() if strategy_name == "hyde" else None,
-        )
-        inp = strategy.get_retrieval_input(state["query"])
+        q = state.get("query") or ""
+        inp = enhance_agent.get_retrieval_input(q)
         return {
-            "retrieval_text": inp.text or state["query"],
+            "retrieval_text": inp.text or q,
             "retrieval_embedding": inp.embedding,
         }
 
     def retrieve_node(state: RagState) -> RagState:
         k = state.get("k", 4)
         retrieval_embedding = state.get("retrieval_embedding")
-        retrieval_text = state.get("retrieval_text") or state["query"]
+        retrieval_text = state.get("retrieval_text") or (state.get("query") or "")
 
         if retrieval_embedding is not None:
             docs = service._search_docs_by_vector(retrieval_embedding, k=k)
@@ -101,13 +97,13 @@ def build_rag_graph(service: "QwenRagService"):
 
     def generate_node(state: RagState) -> RagState:
         messages = service._build_llm_messages(
-            state["query"],
+            state.get("query") or "",
             state.get("prompt_context", "（未检索到相关文档）"),
             state.get("contexts", []),
         )
         if state.get("stream", False):
             return {"llm_messages": messages}
-        result = service._llm.invoke(messages)
+        result = service._llm.invoke(cast(list[BaseMessage], messages))
         answer = service.message_content_to_text(getattr(result, "content", result))
         return {"llm_messages": messages, "answer": answer}
 
@@ -136,12 +132,8 @@ def build_rag_graph(service: "QwenRagService"):
 
     def retry_node(state: RagState) -> RagState:
         retry_count = int(state.get("retry_count", 0)) + 1
-        fallback_strategy = state.get("enhance_strategy") or "query2doc"
-        if fallback_strategy == "hyde":
-            fallback_strategy = "query2doc"
         return {
             "retry_count": retry_count,
-            "enhance_strategy": fallback_strategy,
             "needs_retry": False,
         }
 
