@@ -36,3 +36,7 @@ def session_key(token: str) -> str:
 
 def jwt_blacklist_key(token: str) -> str:
     return f"{REDIS_PREFIX}:jwt:blacklist:{token}"
+
+
+def mcp_token_cache_key(email: str) -> str:
+    return f"{REDIS_PREFIX}:mcp_token:user:{email.lower()}"

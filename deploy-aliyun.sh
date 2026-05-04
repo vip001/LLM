@@ -44,6 +44,7 @@ fi
 WEBUI_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-webui:${IMAGE_TAG}"
 SERVER_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-server:${IMAGE_TAG}"
 LOGIN_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-loginserver:${IMAGE_TAG}"
+MCP_SERVER_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-mcpserver:${IMAGE_TAG}"
 NGINX_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-nginx:${IMAGE_TAG}"
 
 # ECS is usually linux/amd64; Docker on Apple Silicon defaults to arm64 without --platform.
@@ -58,6 +59,9 @@ docker build --platform "${DOCKER_PLATFORM}" -f server/Dockerfile -t "${SERVER_I
 echo "Building ${LOGIN_IMAGE} (${DOCKER_PLATFORM})"
 docker build --platform "${DOCKER_PLATFORM}" -f loginserver/Dockerfile -t "${LOGIN_IMAGE}" .
 
+echo "Building ${MCP_SERVER_IMAGE} (${DOCKER_PLATFORM})"
+docker build --platform "${DOCKER_PLATFORM}" -f mcpserver/Dockerfile -t "${MCP_SERVER_IMAGE}" .
+
 echo "Building ${NGINX_IMAGE} (${DOCKER_PLATFORM})"
 docker build --platform "${DOCKER_PLATFORM}" -f nginx/Dockerfile -t "${NGINX_IMAGE}" .
 
@@ -69,6 +73,9 @@ docker push "${SERVER_IMAGE}"
 
 echo "Pushing ${LOGIN_IMAGE}"
 docker push "${LOGIN_IMAGE}"
+
+echo "Pushing ${MCP_SERVER_IMAGE}"
+docker push "${MCP_SERVER_IMAGE}"
 
 echo "Pushing ${NGINX_IMAGE}"
 docker push "${NGINX_IMAGE}"

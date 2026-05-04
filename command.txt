@@ -1,7 +1,6 @@
 redis-cli
 redis-server
 brew services start redis
-brew services start postgresql
 测试uds链接
 redis-cli -s /tmp/redis.sock ping
 验证是否安装 & 启动成功
@@ -37,4 +36,5 @@ client
 pip install langchain-mcp-adapters
 
 postgresql
+mkdir -p /tmp/postgresql && chmod 1777 && brew services restart postgresql@18
 psql -h 127.0.0.1 -p 5432 -U xiafeng -d postgres -c "\dt"

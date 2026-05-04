@@ -77,12 +77,40 @@ services:
       PG_SOCKET_DIR: ""
       ALLOWED_ORIGINS: "*"
       ENABLE_DEBUG_CODE: "1"
+      # 写入 /auth/mcp-token 返回的 MCP 配置，须为客户端可访问的绝对 URL（经 nginx 的 /mcp）。
+      # 云上部署在 .env 中设置 MCP_SERVER_URL=https://你的域名/mcp
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://localhost/mcp}
     ports:
       - "8000:8000"
     restart: unless-stopped
     networks:
       llm_net:
         ipv4_address: 172.28.240.12
+
+  mcpserver:
+    build:
+      context: .
+      dockerfile: mcpserver/Dockerfile
+    container_name: llm-mcpserver
+    depends_on:
+      - postgres
+    env_file:
+      - .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: loginserver
+      PG_PASSWORD: loginserver
+      PG_DATABASE: loginserver
+      PG_SOCKET_DIR: ""
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./server/vectorstore:/app/server/vectorstore
+    restart: unless-stopped
+    networks:
+      llm_net:
+        ipv4_address: 172.28.240.15
 
   redis:
     image: docker.m.daocloud.io/library/redis:7-alpine
@@ -113,6 +141,7 @@ services:
       - webui
       - loginserver
       - server
+      - mcpserver
     ports:
       - "80:80"
     volumes:

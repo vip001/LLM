@@ -10,23 +10,50 @@ Then list tools::
 
     python mcpserver/test_mcpclient.py
 
-Uses the same dev ``jwt_key_pair`` as ``llm_mcpserver.mcpserver`` (file-backed after first
-``RSAKeyPair.generate()``) to mint a bearer JWT.
+Optional env: ``MCP_URL`` (default ``http://127.0.0.1:8001/mcp``). HTTP client uses
+``trust_env=False`` so system ``HTTP_PROXY`` does not send localhost traffic through a
+proxy (which often yields 502).
+
+Uses the same ``jwt_key_pair`` / issuer / audience as ``llm_mcpserver.mcpserver`` (loaded
+from PostgreSQL ``mcp_jwt_config`` after ``RSAKeyPair.generate()`` on first run) to mint a bearer JWT.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any, cast
 
+import httpx
 from langchain_core.messages import ToolMessage
 from langchain_core.messages.tool import tool_call
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_mcp_adapters.sessions import Connection
+from langchain_mcp_adapters.sessions import Connection, McpHttpClientFactory
+from mcp.shared._httpx_utils import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
 
 from llm_mcpserver.mcpserver import MCP_JWT_AUDIENCE, MCP_JWT_ISSUER, jwt_key_pair
 
-DEFAULT_MCP_URL = "http://127.0.0.1:8001/mcp"
+DEFAULT_MCP_URL = os.environ.get("MCP_URL", "http://127.0.0.1:8001/mcp")
+
+
+def _mcp_httpx_client_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    """Match MCP default timeouts; ``trust_env=False`` avoids proxying ``127.0.0.1``."""
+    if timeout is None:
+        timeout = httpx.Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT)
+    kwargs: dict[str, Any] = {
+        "follow_redirects": True,
+        "trust_env": False,
+        "timeout": timeout,
+    }
+    if headers is not None:
+        kwargs["headers"] = headers
+    if auth is not None:
+        kwargs["auth"] = auth
+    return httpx.AsyncClient(**kwargs)
 DEFAULT_TOOL = "retrieve_rag_contexts"
 
 
@@ -82,10 +109,12 @@ def _mcp_client(url: str) -> MultiServerMCPClient:
         issuer=MCP_JWT_ISSUER,
         audience=MCP_JWT_AUDIENCE,
     )
+    factory: McpHttpClientFactory = _mcp_httpx_client_factory
     cfg: dict[str, Any] = {
         "transport": "streamable_http",
         "url": url,
         "headers": {"Authorization": f"Bearer {token}"},
+        "httpx_client_factory": factory,
     }
     rag_mcp: Connection = cast(Connection, cfg)
     return MultiServerMCPClient({"rag_mcp": rag_mcp})

@@ -2,15 +2,16 @@
 FastMCP entry: expose RAG retrieval `contexts` (and `prompt_context`) using the same
 pipeline as `rag_graph.retrieve_node` / `QwenRagService.retrieve_context`.
 
-JWT: dev keys are created with ``RSAKeyPair.generate()`` on first run and reused from
-``mcpserver/.mcp_jwt_dev_keys.json`` so separate server and client processes share the pair.
-``MCP_JWT_ISSUER`` must match ``RSAKeyPair.create_token`` defaults. Import ``jwt_key_pair``
-to mint bearer tokens (e.g. from ``test_mcpclient``).
+JWT: RSA 密钥对与 ``issuer`` / ``audience`` 存于 PostgreSQL 表 ``mcp_jwt_config``（首启时生成
+并写入；可通过环境变量 ``MCP_JWT_ISSUER`` / ``MCP_JWT_AUDIENCE`` 指定默认值）。
+``MCP_JWT_ISSUER`` / ``MCP_JWT_AUDIENCE`` 运行中取自数据库行，须与签发端一致。
+导入 ``jwt_key_pair`` 可签发 Bearer（如 ``test_mcpclient``）。
 """
 from __future__ import annotations
 
+import asyncio
 import json
-from pathlib import Path
+import os
 from typing import Any
 
 from fastmcp import FastMCP
@@ -18,47 +19,53 @@ from fastmcp.server.auth import JWTVerifier
 from fastmcp.server.auth.providers.jwt import RSAKeyPair
 from pydantic import SecretStr
 
+# Loads repo ``.env`` before ``postgres_store`` reads ``PG_*`` at import time.
+from llm_common.mcp_jwt_dao import get_mcp_jwt_config, save_mcp_jwt_config
 from llm_common.rag.qwen_rag_service import QwenRagService
+from llm_common.postgres_store import init_postgres
 
-MCP_JWT_ISSUER = "https://fastmcp.example.com"
-MCP_JWT_AUDIENCE = "Android黄金屋社区"
-
-_DEV_JWT_KEYS_PATH = Path(__file__).resolve().parent.parent / ".mcp_jwt_dev_keys.json"
+_DEFAULT_MCP_JWT_ISSUER = "https://fastmcp.example.com"
+_DEFAULT_MCP_JWT_AUDIENCE = "Android黄金屋社区"
 
 
-def _dev_jwt_key_pair() -> RSAKeyPair:
-    if _DEV_JWT_KEYS_PATH.is_file():
-        try:
-            data = json.loads(_DEV_JWT_KEYS_PATH.read_text(encoding="utf-8"))
-            priv = data.get("private_pem")
-            pub = data.get("public_pem")
-            if (
-                isinstance(priv, str)
-                and isinstance(pub, str)
-                and "PRIVATE KEY" in priv
-                and "PUBLIC KEY" in pub
-            ):
-                return RSAKeyPair(private_key=SecretStr(priv), public_key=pub)
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
+def _default_issuer_audience() -> tuple[str, str]:
+    issuer = os.getenv("MCP_JWT_ISSUER", _DEFAULT_MCP_JWT_ISSUER).strip() or _DEFAULT_MCP_JWT_ISSUER
+    audience = (
+        os.getenv("MCP_JWT_AUDIENCE", _DEFAULT_MCP_JWT_AUDIENCE).strip()
+        or _DEFAULT_MCP_JWT_AUDIENCE
+    )
+    return issuer, audience
+
+
+async def _bootstrap_mcp_jwt_async() -> tuple[str, str, RSAKeyPair]:
+    await init_postgres(ensure_models=("llm_common.mcp_jwt_dao",))
+    row = await get_mcp_jwt_config()
+    default_issuer, default_audience = _default_issuer_audience()
+    if row is not None:
+        priv = row.private_key_pem
+        pub = row.public_key_pem
+        iss = (row.issuer or "").strip()
+        aud = (row.audience or "").strip()
+        if (
+            iss
+            and aud
+            and isinstance(priv, str)
+            and isinstance(pub, str)
+            and "PRIVATE KEY" in priv
+            and "PUBLIC KEY" in pub
+        ):
+            return iss, aud, RSAKeyPair(private_key=SecretStr(priv), public_key=pub)
     pair = RSAKeyPair.generate()
-    try:
-        _DEV_JWT_KEYS_PATH.write_text(
-            json.dumps(
-                {
-                    "private_pem": pair.private_key.get_secret_value(),
-                    "public_pem": pair.public_key,
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-    except OSError:
-        pass
-    return pair
+    await save_mcp_jwt_config(
+        issuer=default_issuer,
+        audience=default_audience,
+        public_key_pem=pair.public_key,
+        private_key_pem=pair.private_key.get_secret_value(),
+    )
+    return default_issuer, default_audience, pair
 
 
-jwt_key_pair = _dev_jwt_key_pair()
+MCP_JWT_ISSUER, MCP_JWT_AUDIENCE, jwt_key_pair = asyncio.run(_bootstrap_mcp_jwt_async())
 
 auth = JWTVerifier(
     public_key=jwt_key_pair.public_key,

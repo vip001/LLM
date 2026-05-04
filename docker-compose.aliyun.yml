@@ -58,12 +58,36 @@ services:
       PG_SOCKET_DIR: ""
       ALLOWED_ORIGINS: "*"
       ENABLE_DEBUG_CODE: "1"
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://120.26.236.143/mcp}
     ports:
       - "8000:8000"
     restart: unless-stopped
     networks:
       llm_net:
         ipv4_address: 172.28.240.12
+
+  mcpserver:
+    image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-mcpserver:${IMAGE_TAG:-latest}
+    container_name: llm-mcpserver
+    depends_on:
+      - postgres
+    env_file:
+      - .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: loginserver
+      PG_PASSWORD: loginserver
+      PG_DATABASE: loginserver
+      PG_SOCKET_DIR: ""
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./server/vectorstore:/app/server/vectorstore
+    restart: unless-stopped
+    networks:
+      llm_net:
+        ipv4_address: 172.28.240.15
 
   redis:
     image: docker.m.daocloud.io/library/redis:7-alpine
@@ -94,6 +118,7 @@ services:
       - webui
       - loginserver
       - server
+      - mcpserver
     ports:
       - "80:80"
     volumes:

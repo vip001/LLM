@@ -1,4 +1,4 @@
-# Shared RAG / vector code (install from repo root: pip install -r server/requirements.txt)
+# Shared RAG / vector code（本地：在仓库根目录执行 pip install -r server/requirements.txt）
 -e ../llm_common
 
 # API 服务

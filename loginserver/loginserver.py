@@ -1,14 +1,13 @@
+import logging
 import os
 import re
 import secrets
-from contextlib import asynccontextmanager
 import smtplib
-import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from random import randint
 from typing import Optional
-import jwt
 from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
@@ -21,25 +20,41 @@ logging.basicConfig(
 try:
     # Package import when running from project root: uvicorn loginserver:app
     from llm_common.postgres_store import init_postgres
-    from .login_dao import (
+    from .dao.login_dao import (
         delete_login_session_by_token,
         get_login_session_by_token,
         save_login_session,
     )
-    from .redis_store import code_key, jwt_blacklist_key, redis_client, session_key
+    from .jwt_api import create_jwt_router
+    from .mcp_token_api import create_mcp_token_router, make_mcp_token_login_middleware
+    from .dao.redis_store import (
+        code_key,
+        redis_client,
+        session_key,
+    )
 
-    _PG_ENSURE_MODELS: tuple[str, ...] = ("loginserver.login_dao",)
+    _PG_ENSURE_MODELS: tuple[str, ...] = (
+        "loginserver.dao.login_dao",
+        "loginserver.dao.mcp_token_dao",
+        "llm_common.mcp_jwt_dao",
+    )
 except ImportError:
     # Module import when running inside loginserver directory: uvicorn loginserver:app
     from llm_common.postgres_store import init_postgres
-    from login_dao import (
+    from dao.login_dao import (
         delete_login_session_by_token,
         get_login_session_by_token,
         save_login_session,
     )
-    from redis_store import code_key, jwt_blacklist_key, redis_client, session_key
+    from jwt_api import create_jwt_router
+    from mcp_token_api import create_mcp_token_router, make_mcp_token_login_middleware
+    from dao.redis_store import (
+        code_key,
+        redis_client,
+        session_key,
+    )
 
-    _PG_ENSURE_MODELS = ("login_dao",)
+    _PG_ENSURE_MODELS = ("dao.login_dao", "dao.mcp_token_dao", "llm_common.mcp_jwt_dao")
 
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 CODE_EXPIRE_SECONDS = int(os.getenv("CODE_EXPIRE_SECONDS", "60"))
@@ -51,9 +66,6 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1") == "1"
 MAIL_FROM = os.getenv("MAIL_FROM", SMTP_USER)
-JWT_SECRET = os.getenv("JWT_SECRET", "replace-me-in-production")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRE_SECONDS = int(os.getenv("JWT_EXPIRE_SECONDS", "7200"))
 
 
 @asynccontextmanager
@@ -72,6 +84,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 class SendCodeRequest(BaseModel):
     email: EmailStr
 
@@ -103,13 +117,6 @@ class CurrentUserResponse(BaseModel):
 
 class LogoutResponse(BaseModel):
     message: str
-
-
-class JWTLoginResponse(BaseModel):
-    access_token: str
-    token_type: str
-    expires_at: str
-    user_email: str
 
 
 def send_verification_email(email: str, code: str) -> None:
@@ -158,37 +165,20 @@ def extract_bearer_token(authorization: Optional[str]) -> str:
     return token.strip()
 
 
-def create_jwt_token(email: str, expires_at: datetime) -> str:
-    payload = {
-        "sub": email,
-        "iat": int(datetime.now(timezone.utc).timestamp()),
-        "exp": int(expires_at.timestamp()),
-        "type": "access",
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+app.add_middleware(make_mcp_token_login_middleware(extract_bearer_token))
 
 
-def decode_jwt_token(token: str) -> dict:
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except jwt.ExpiredSignatureError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT 已过期，请重新登录",
-        ) from exc
-    except jwt.InvalidTokenError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT 无效",
-        ) from exc
+app.include_router(
+    create_jwt_router(
+        login_request_model=LoginRequest,
+        current_user_response_model=CurrentUserResponse,
+        logout_response_model=LogoutResponse,
+        extract_bearer_token=extract_bearer_token,
+        email_regex=EMAIL_REGEX,
+    )
+)
 
-    subject = payload.get("sub")
-    if not isinstance(subject, str) or not subject:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT 缺少用户标识",
-        )
-    return payload
+app.include_router(create_mcp_token_router())
 
 
 @app.get("/health")
@@ -290,62 +280,4 @@ async def logout(authorization: Optional[str] = Header(default=None)) -> LogoutR
 
     await redis_client.delete(session_key(token))
     await delete_login_session_by_token(token)
-    return LogoutResponse(message="已退出登录")
-
-
-@app.post("/auth/jwt/login", response_model=JWTLoginResponse)
-async def jwt_login(payload: LoginRequest) -> JWTLoginResponse:
-    email = payload.email.strip().lower()
-    input_code = payload.code.strip()
-    if not EMAIL_REGEX.match(email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="邮箱格式不正确",
-        )
-
-    saved_code = await redis_client.get(code_key(email))
-    if not saved_code or saved_code != input_code:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="验证码错误或已过期",
-        )
-
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=JWT_EXPIRE_SECONDS)
-    access_token = create_jwt_token(email=email, expires_at=expires_at)
-    await redis_client.delete(code_key(email))
-
-    return JWTLoginResponse(
-        access_token=access_token,
-        token_type="Bearer",
-        expires_at=expires_at.isoformat(),
-        user_email=email,
-    )
-
-
-@app.get("/auth/jwt/me", response_model=CurrentUserResponse)
-async def jwt_me(authorization: Optional[str] = Header(default=None)) -> CurrentUserResponse:
-    token = extract_bearer_token(authorization)
-    if await redis_client.get(jwt_blacklist_key(token)):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT 已退出登录，请重新登录",
-        )
-
-    payload = decode_jwt_token(token)
-    expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc).isoformat()
-    return CurrentUserResponse(
-        email=payload["sub"],
-        token_type="Bearer",
-        expires_at=expires_at,
-    )
-
-
-@app.post("/auth/jwt/logout", response_model=LogoutResponse)
-async def jwt_logout(authorization: Optional[str] = Header(default=None)) -> LogoutResponse:
-    token = extract_bearer_token(authorization)
-    payload = decode_jwt_token(token)
-    exp_timestamp = int(payload["exp"])
-    ttl_seconds = exp_timestamp - int(datetime.now(timezone.utc).timestamp())
-    if ttl_seconds > 0:
-        await redis_client.setex(jwt_blacklist_key(token), ttl_seconds, "1")
     return LogoutResponse(message="已退出登录")
