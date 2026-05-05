@@ -126,7 +126,7 @@ class AskHttpController:
                 contexts, stream_gen, trace_data = self._rag.ask_stream(
                     query, trace=trace
                 )
-                refs_payload = {"contexts": contexts}
+                refs_payload: dict[str, Any] = {"contexts": contexts}
                 if trace and trace_data is not None:
                     refs_payload["trace"] = trace_data
                 refs_bytes = json.dumps(refs_payload, ensure_ascii=False).encode("utf-8")
