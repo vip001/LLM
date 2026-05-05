@@ -1,223 +1,213 @@
-# LLM RAG 问答平台
+# LLM RAG 问答工程
 
-基于 **阿里云百炼 DashScope（Qwen）** 与 **LangChain / LangGraph** 的检索增强生成（RAG）系统：提供 Web 对话、邮箱验证码登录，以及 **MCP（Model Context Protocol）** 检索工具，便于 IDE 与其它 Agent 复用同一套向量库与检索逻辑。
-
-**运行要求**：Python **≥ 3.12**（见 `llm_common/pyproject.toml`）；根目录 `.env` 至少配置 `DASHSCOPE_API_KEY` 及嵌入相关变量（见下文）。
+基于 **阿里云百炼 DashScope（Qwen）** 的端到端 RAG：FAISS 向量检索、查询增强（HyDE / Query2Doc 等）、**LangGraph** 编排与多轮会话（内存或 **PostgreSQL checkpoint**）。配套 **Next.js** 聊天前端、**FastAPI 登录与会话**、以及 **FastMCP** 暴露的 RAG 检索工具（供 Cursor 等 MCP 客户端使用）。
 
 ---
 
 ## 功能概览
 
-| 能力 | 说明 |
-|------|------|
-| **RAG 问答** | FAISS 向量检索、多模态嵌入（可选）、图文块入库与检索 |
-| **查询增强** | Web `/ask` 主链路由 **`QueryEnhanceToolAgent`** 在 **Query2Doc** 与 **HyDE** 间自动二选一（LangGraph 工具型 Agent） |
-| **图编排** | `StateGraph`：准备 → 查询增强 → 检索 → 检索守卫 → 生成 → 自检与有限次重试 |
-| **Web UI** | Next.js：对话、登录、MCP Token 配置说明 |
-| **账号体系** | 邮箱验证码、Redis、PostgreSQL、Session / JWT |
-| **MCP** | JWT 鉴权后暴露 `retrieve_rag_contexts`（可选手动指定 `query2doc` / `hyde`） |
+- **RAG 与图编排**：`QwenRagService` 以 LangGraph **`StateGraph`**（[`rag_graph.py`](llm_common/llm_common/rag/rag_graph.py)）统一主链：FAISS 向量检索、图文块入库与检索、多模态嵌入（可选）、上下文拼装与 DashScope 对话（流式 / 非流式）均在图内完成；**查询增强**由图节点 **[`QueryEnhanceToolAgent`](llm_common/llm_common/rag/query_enhance_agent.py)** 在 **Query2Doc** 与 **HyDE** 间自动二选一（工具型 Agent）。节点顺序：**准备** → **检索查询上下文化**（多轮会话得到 `retrieval_query`）→ **查询增强** → **检索** → **检索守卫** → **生成** → **自检**（仅非流式）→ **有限次重试**（低置信时回到查询增强）→ **收尾**（写入助手消息）。**短路**：守卫发现无上下文则直接收尾；流式生成跳过自检直接收尾。
+- **多轮对话**：`session_id` / 请求头 `X-Session-Id` 对应 LangGraph thread；生产环境可通过 `LANGGRAPH_CHECKPOINT_DB_URI` 写入 Postgres。
+- **Web UI**：Next.js：对话、登录、MCP Token 配置说明。
+- **账号体系**：邮箱验证码登录（OTP）、Redis 会话、Postgres 持久化；JWT 子路由；**MCP 访问令牌**（`/auth/mcp-token`）与 RSA 配置表 `mcp_jwt_config`。
+- **MCP**：JWT 鉴权后暴露 `retrieve_rag_contexts`（可选手动指定 `query2doc` / `hyde`）。
 
 ---
 
-## 仓库结构
-
-| 目录 / 文件 | 说明 |
-|-------------|------|
-| `llm_common/` | 可安装包 **`llm-common`**：RAG 服务、向量库、嵌入、查询增强、DashScope 客户端、路径与 DB 相关工具 |
-| `server/` | Flask **`/ask`**、Gunicorn 镜像；`server/pdf` 放待索引 PDF；`server/vectorstore` 持久化 FAISS |
-| `server/pdf_to_chroma.py` | 从 `server/pdf` 构建/更新向量库（混合分块、可选页内图片多模态向量） |
-| `webui/` | Next.js 前端（[`webui/README.md`](webui/README.md)） |
-| `loginserver/` | FastAPI：登录、MCP 配置下发（`MCP_SERVER_URL`） |
-| `mcpserver/` | FastMCP：RAG 检索工具 |
-| `nginx/` | 反代：`/` → WebUI，`/auth/` → loginserver，`/mcp` → mcpserver |
-| `docker-compose.yml` | 本地构建各服务 |
-| `docker-compose.aliyun.yml` | 云上从 ACR 拉镜像 |
-| `deploy-aliyun.sh` | 构建、推送 ACR、可选远程启动 |
-
-### `llm_common.rag` 模块索引（便于读代码）
-
-| 模块 | 职责 |
-|------|------|
-| `qwen_rag_service.py` | `QwenRagService`：`ask_once` / `ask_stream`（走 LangGraph）、`retrieve_context`（MCP 用，固定策略） |
-| `rag_graph.py` | 编译 RAG 状态图：节点与条件边 |
-| `query_enhance_agent.py` | `QueryEnhanceToolAgent`：工具调用在 Query2Doc / HyDE 间择一 |
-| `query_enhance.py` | `Query2DocStrategy`、`HyDEStrategy`、`get_strategy` |
-| `vector_db.py` | FAISS 封装与持久化 |
-| `embedding_provider.py` | 嵌入模型选择（DashScope 多模态 / Ollama 等） |
-| `dashscope_llm.py` | DashScope 对话客户端 |
-
----
-
-## 架构概览
+## 系统架构
 
 ```mermaid
 flowchart LR
-  Browser[浏览器] --> Nginx[Nginx :80]
-  Nginx --> WebUI[webui :3000]
-  Nginx --> Login[loginserver :8000]
-  Nginx --> MCP[mcpserver :8001]
-  WebUI --> Server[server :5000 /ask]
-  Login --> Redis[(Redis)]
-  Login --> PG[(PostgreSQL)]
+  Browser[浏览器 / MCP 客户端]
+  Nginx[Nginx :80]
+  WebUI[webui :3000]
+  Login[loginserver :8000]
+  MCP[mcpserver :8001]
+  Flask[server :5000]
+  PG[(PostgreSQL)]
+  Redis[(Redis)]
+
+  Browser --> Nginx
+  Nginx -->|"/"| WebUI
+  Nginx -->|"/auth/"| Login
+  Nginx -->|"/mcp"| MCP
+  WebUI -->|FLASK_ASK_URL| Flask
+  Login --> PG
+  Login --> Redis
   MCP --> PG
-  Server --> VS[(vectorstore FAISS)]
-  MCP --> VS
-  Server --> DashScope[DashScope API]
-  MCP --> DashScope
+  Flask --> PG
 ```
 
-- **server**、**mcpserver** 读取仓库根目录 **`.env`**（对话密钥、嵌入等）。
-- **loginserver**、**mcpserver** 共用 **PostgreSQL**（用户数据、MCP JWT 公钥与 issuer/audience 等）。
-- 浏览器经同源 **`/auth/*`** 访问登录；MCP 客户端使用可公网访问的 **`https://你的域名/mcp`**（由 nginx 转发；compose 通过 **`MCP_SERVER_URL`** 写给前端）。
+| 服务 | 镜像/构建 | 说明 |
+|------|-----------|------|
+| **server** | `server/Dockerfile` | Gunicorn 运行 `ollama_qwen:app`，端口 **5000**（Compose 内仅 expose） |
+| **webui** | `webui/Dockerfile` | Next.js 16，端口 **3000** |
+| **loginserver** | `loginserver/Dockerfile` | FastAPI + Uvicorn，宿主机 **8000** |
+| **mcpserver** | `mcpserver/Dockerfile` | `llm-mcp`（FastMCP streamable-http），宿主机 **8001** |
+| **postgres** | `postgres:16-alpine` | 用户/库默认 `loginserver`，数据卷 `loginserver_pg_data` |
+| **redis** | `redis:7-alpine` | loginserver 会话与验证码等 |
+| **nginx** | `nginx:1.27-alpine` | 宿主机 **80**，挂载 `nginx/default.conf` |
 
-### RAG 主链路（Web `/ask`）简要流程
-
-1. **prepare**：规范化 `query`、`k`、重试上限等。  
-2. **enhance_query**：`QueryEnhanceToolAgent` 调用唯一工具，得到文本检索向量或 HyDE 融合向量。  
-3. **retrieve**：按文本或向量检索 FAISS，合并同页图片等。  
-4. **retrieval_guard**：无上下文时短路为拒答文案。  
-5. **generate**：组装消息并调用 DashScope（流式或非流式）。  
-6. **self_check** / **retry**：低置信度时有限次回到 **enhance_query**。
-
-开启 **`trace`** 时，轨迹中含 **`retrieval_mode`**：`text` 对应 Query2Doc 路径，`vector` 对应 HyDE 路径。
+**共享 Python 包**：[`llm_common`](llm_common/)（被 server、loginserver、mcpserver 以可编辑或路径依赖方式引用）。
 
 ---
 
-## 知识库构建
+## 仓库目录
 
-1. 将 PDF 放入 **`server/pdf`**（可子目录；与 `docker-compose` 挂载一致）。  
-2. 配置根目录 **`.env`**（含 `DASHSCOPE_API_KEY`；多模态嵌入见 `embedding_provider`）。  
-3. 安装依赖后执行：
-
-```bash
-cd /path/to/llm
-source .venv/bin/activate
-pip install -r server/requirements.txt
-python server/pdf_to_chroma.py
-```
-
-向量与清单写入 **`server/vectorstore`**（容器内为 `/app/server/vectorstore`）。**server** 与 **mcpserver** 需挂载同一目录以共用索引。
-
----
-
-## 环境变量（常见）
-
-在项目**根目录**维护 **`.env`**。下表为常见项，**以代码为准**。
-
-| 变量 | 用途 |
+| 路径 | 内容 |
 |------|------|
-| `DASHSCOPE_API_KEY` | 百炼 DashScope |
-| `DASHSCOPE_CHAT_MODEL` / `DASHSCOPE_VL_MODEL` / `DASHSCOPE_BASE_HTTP_API_URL` | 对话 / 多模态模型与 HTTP 基址（可选） |
-| 嵌入相关 | `EmbeddingProvider`（如 DashScope 多模态或 Ollama，见 `llm_common.rag.embedding_provider`） |
-| `MCP_SERVER_URL` | 返回给前端的 MCP 绝对 URL（生产建议 `https://域名/mcp`） |
-| `MCP_JWT_ISSUER` / `MCP_JWT_AUDIENCE` | MCP JWT 默认声明（可与 DB 配置对齐） |
+| [`llm_common/`](llm_common/) | 共享库：`rag/`（`qwen_rag_service`、`rag_graph`、`vector_db`、`embedding_provider`、`dashscope_llm` 等）、`postgres_store.py`、`mcp_jwt_dao.py`、`paths.py` |
+| [`server/`](server/) | Flask 入口 [`ollama_qwen.py`](server/ollama_qwen.py)、`vectorstore/`、`pdf/`、索引脚本 [`pdf_to_chroma.py`](server/pdf_to_chroma.py)、[`check_ollama_embed.py`](server/check_ollama_embed.py) |
+| [`webui/`](webui/) | Next.js App Router，[`src/app/api/ask/route.ts`](webui/src/app/api/ask/route.ts) 代理后端 |
+| [`loginserver/`](loginserver/) | [`loginserver.py`](loginserver/loginserver.py)、`jwt_api`、`mcp_token_api`、`dao/` |
+| [`mcpserver/`](mcpserver/) | [`llm_mcpserver/mcpserver.py`](mcpserver/llm_mcpserver/mcpserver.py)，工具 `retrieve_rag_contexts` |
+| [`nginx/`](nginx/) | [`default.conf`](nginx/default.conf)，日志目录 `nginx/logs/` |
+| [`docker-compose.yml`](docker-compose.yml) | 本地构建编排；固定子网 `172.28.240.0/24` |
+| [`docker-compose.aliyun.yml`](docker-compose.aliyun.yml) | 使用 ACR 镜像变量拉取预构建镜像 |
+| [`deploy-aliyun.sh`](deploy-aliyun.sh) | 构建并推送 webui/server/loginserver/mcpserver/nginx 至 ACR，可选 SSH 同步 compose 到 ECS（用法见脚本顶部注释） |
+| [`uidesign/`](uidesign/) | 静态设计稿等 |
 
-**loginserver** 另需 **`REDIS_URL`**、**`PG_*`**、可选 **`SMTP_*`**；`docker-compose.yml` 中带开发默认值。
+**数据库迁移**：无 Alembic；首次启动由 `init_postgres` + SQLAlchemy `create_all` 创建表（见 loginserver lifespan 与 mcpserver 启动逻辑）。
 
 ---
 
-## 本地开发
+## HTTP API
 
-### 1. RAG API（Flask）
+### Flask `server` — [`server/ollama_qwen.py`](server/ollama_qwen.py)
 
-`server/requirements.txt` 已包含 **`-e ../llm_common`**，安装时会拉取共享包。
+| 路由 | 说明 |
+|------|------|
+| `GET/POST /ask` | 参数 **`query`**（必填）；**`stream`** 默认 `true`：`false` 时返回 JSON（`ask_once`）；**`trace`** 可选；**`session_id` / `sessionId`** 或头 **`X-Session-Id`** 多轮会话。响应头 **`X-Session-Id`** 带回 thread id。 |
+| `GET /` | `{"status":"ok"}` 健康检查 |
+
+**流式模式**（`stream=true`）：`Content-Type: application/octet-stream`，首段为魔数 `RAG\x01` + 4 字节大端 JSON 长度 + UTF-8 JSON（含 `contexts`、`session_id`，可选 `trace`），随后为回答 token 的 UTF-8 字节流。
+
+**本地开发**：`python server/ollama_qwen.py serve`，默认 `FLASK_HOST`/`FLASK_PORT` 可调。
+
+### loginserver — 前缀以部署为准
+
+经 Nginx 时为 **同源 `/auth/...`**；直连 loginserver 时为 **`http://127.0.0.1:8000/auth/...`**（与 [`webui/src/lib/authBaseUrl.ts`](webui/src/lib/authBaseUrl.ts) 默认一致）。
+
+| 路由 | 说明 |
+|------|------|
+| `GET /health` | 健康检查 |
+| `POST /auth/send-code` | 发送邮箱验证码（邮件发送逻辑在源码中可能注释，调试可看 `ENABLE_DEBUG_CODE`） |
+| `POST /auth/login` | OTP 登录，返回会话令牌 |
+| `GET /auth/me` | 当前用户 |
+| `POST /auth/logout` | 登出 |
+| `POST/GET /auth/mcp-token` | MCP 客户端配置与令牌（需登录 middleware） |
+| `/auth/jwt/*` | JWT 子路由（见 `jwt_api`） |
+
+### WebUI — Next.js
+
+| 路径 | 说明 |
+|------|------|
+| [`src/app/page.tsx`](webui/src/app/page.tsx) | 聊天主页 |
+| [`src/app/settings/`](webui/src/app/settings/) | 设置页（含 MCP Token 区块） |
+| `POST /api/ask` | 服务端转发至 `FLASK_ASK_URL`，体字段 `query`、`stream`、`session_id`，转发 `X-Session-Id` |
+
+详见 [webui/README.md](webui/README.md)。
+
+### MCP — `mcpserver`
+
+- **传输**：`streamable-http`，监听 `0.0.0.0:8001`，路径 **`/mcp`**。
+- **工具**：`retrieve_rag_contexts(query, k, enhance_strategy)` → 与 `QwenRagService.retrieve_context` 一致。
+- **鉴权**：Bearer JWT，公钥与 `issuer`/`audience` 与表 `mcp_jwt_config` 一致；可通过环境变量 `MCP_JWT_ISSUER`、`MCP_JWT_AUDIENCE` 影响首启写入默认值。
+
+经 Nginx 访问：**`http://<host>/mcp`**。对外分发 MCP 配置时需设置 **`MCP_SERVER_URL`**（如 `https://你的域名/mcp`）。
+
+---
+
+## Nginx 路由摘要
+
+[`nginx/default.conf`](nginx/default.conf)：
+
+- **`/`** → `webui:3000`（长超时、关闭代理缓冲、每 IP 约 10 req/s 限流）
+- **`/auth/`** → `loginserver:8000`
+- **`/mcp`**、**`/mcp/`** → `mcpserver:8001`（精确区分，避免前缀误匹配）
+
+---
+
+## 环境变量（按关注点）
+
+### 根目录 `.env`（server / mcpserver 通过 Compose `env_file` 加载）
+
+| 变量 | 说明 |
+|------|------|
+| `DASHSCOPE_API_KEY` | 百炼 API Key（必填） |
+| `DASHSCOPE_BASE_HTTP_API_URL` | 可选，HTTP 基址 |
+| `DASHSCOPE_CHAT_MODEL` / `DASHSCOPE_VL_MODEL` | 对话 / 多模态模型（见 `ollama_qwen.py` 模块注释） |
+| `LANGGRAPH_CHECKPOINT_DB_URI` | Postgres 连接串；未设置则用内存 checkpoint |
+| `LANGGRAPH_CHECKPOINT_POOL_MAX` | checkpoint 连接池大小，默认 `5` |
+| `MCP_JWT_ISSUER` / `MCP_JWT_AUDIENCE` | mcpserver / `mcp_jwt_config` 默认值 |
+
+### Compose 内联（`docker-compose.yml`）
+
+- **webui**：`FLASK_ASK_URL=http://server:5000/ask`，`NEXT_PUBLIC_AUTH_BASE_URL=/auth`
+- **loginserver**：`REDIS_URL`、`PG_*`、`ALLOWED_ORIGINS`、`ENABLE_DEBUG_CODE`、**`MCP_SERVER_URL`**
+- **mcpserver**：`PG_*`（与 postgres 服务一致）
+
+嵌入后端默认在代码中指向 DashScope 多模态向量；若改用 Ollama，需调整 [`llm_common/llm_common/rag/embedding_provider.py`](llm_common/llm_common/rag/embedding_provider.py) 中的 `DEFAULT_EMBED_MODEL_NAME` 等常量，并保证 Ollama 可访问（Docker 内需额外网络或 host 配置）。
+
+---
+
+## Docker Compose 启动
 
 ```bash
-cd /path/to/llm
-python -m venv .venv
-source .venv/bin/activate
+# 仓库根目录：创建 .env，至少写入 DASHSCOPE_API_KEY=...
+docker compose up --build -d
+```
+
+- 前端与网关：<http://localhost>
+- loginserver：<http://localhost:8000>
+- MCP 直连：<http://localhost:8001/mcp>；经网关：<http://localhost/mcp>
+
+**数据目录**：`server/vectorstore`、`server/pdf` 挂载到 **server**；**mcpserver** 挂载 `server/vectorstore` 以共享 FAISS 索引。
+
+**构建注意**：`python:3.12-slim` 无系统 libpq，`llm_common` 声明 **`psycopg[binary]`**，供 LangGraph Postgres checkpoint 使用；[`mcpserver/Dockerfile`](mcpserver/Dockerfile) 使用国内 PyPI 镜像与较长 pip 超时，降低大 wheel 下载失败率。
+
+### 阿里云镜像
+
+使用 [`docker-compose.aliyun.yml`](docker-compose.aliyun.yml)，设置 `ACR_REGISTRY`、`ACR_NAMESPACE`、`IMAGE_TAG` 等。构建推送可参考 [`deploy-aliyun.sh`](deploy-aliyun.sh) 顶部 **Usage**（脚本内请勿提交真实账号/密钥，按需本地覆盖环境变量执行）。
+
+---
+
+## 本地开发（无 Docker）
+
+**Python 3.12+**：
+
+```bash
+python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -e ./llm_common
 pip install -r server/requirements.txt
-cd server
-python ollama_qwen.py serve
+# loginserver
+pip install -r loginserver/requirements.txt
+# mcpserver（在 mcpserver 目录）
+cd mcpserver && pip install -e . && cd ..
 ```
 
-默认 **`http://127.0.0.1:5000`**；健康检查 **`GET /`**。
+1. 根目录 `.env` 配置 `DASHSCOPE_API_KEY` 等。  
+2. 启动 Postgres / Redis（或与 compose 只起依赖服务）。  
+3. RAG API：`python server/ollama_qwen.py serve`  
+4. loginserver：在 `loginserver` 目录按项目习惯启动 uvicorn（需 `PG_*`、`REDIS_URL`）。  
+5. 前端：`cd webui && npm install && npm run dev`，设置 `FLASK_ASK_URL`、`NEXT_PUBLIC_AUTH_BASE_URL`。
 
-### 2. 前端
-
-```bash
-cd webui
-npm install
-npm run dev
-```
-
-访问 **`http://localhost:3000`**。Next.js 通过 **`FLASK_ASK_URL`** 将 **`POST /api/ask`** 转发到 Flask **`/ask`**（默认 `http://127.0.0.1:5000/ask`）。
-
-### 3. 登录服务（可选）
-
-```bash
-cd loginserver
-pip install -r requirements.txt
-uvicorn loginserver:app --host 0.0.0.0 --port 8000 --reload
-```
-
-需本机 **Redis**、**PostgreSQL** 与环境变量与 compose 或本地配置一致。
-
-### 4. MCP 服务（可选）
-
-```bash
-cd mcpserver
-pip install -e .
-python -m llm_mcpserver.mcpserver
-```
-
-或使用入口脚本 **`llm-mcp`**（见 `mcpserver/pyproject.toml`）。客户端示例：**`mcpserver/test_mcpclient.py`**。
+索引 PDF 等可使用 `server/pdf_to_chroma.py`；验证 Ollama 嵌入可用 **`python server/check_ollama_embed.py`**。
 
 ---
 
-## HTTP API：`/ask` 摘要
+## 技术栈摘要
 
-- **路径**：`GET` / `POST` **`/ask`**  
-- **参数**：`query`（必填）、`stream`（默认流式）、`trace`（可选调试轨迹）。  
-- **说明**：**不再**通过请求参数固定 `query2doc` / `hyde`；由图内 Agent 自动选择增强方式。  
-- **流式**：自定义二进制帧：魔数 **`RAG\x01`** + JSON 引用块 + UTF-8 正文分片（详见 **`server/ollama_qwen.py`** 注释）。
-
----
-
-## MCP 工具说明
-
-- **`retrieve_rag_contexts`**：对 `QwenRagService.retrieve_context` 的封装。  
-- 参数 **`enhance_strategy`**： **`query2doc`** 或 **`hyde`**，由调用方**手动**指定（与 Web 主链路的 Agent 调度不同）。  
-- 返回 **`prompt_context`** 与序列化 **`contexts`**，供下游 LLM 使用。
+- **后端**：Flask、Gunicorn、FastAPI、Uvicorn、SQLAlchemy、asyncpg、LangChain / LangGraph、FastMCP、DashScope SDK、FAISS（`faiss-cpu`）。  
+- **前端**：Next.js 16、React 19、Tailwind CSS 4、TypeScript。  
+- **基础设施**：PostgreSQL 16、Redis 7、Nginx。
 
 ---
 
-## Docker Compose（一体运行）
-
-在**仓库根目录**：
-
-```bash
-docker compose up -d --build
-```
-
-- 入口：**Nginx `http://localhost:80`**  
-- loginserver 映射 **`8000`**（调试）；mcpserver **`8001`**（生产 MCP 通常只经 **`/mcp`**）  
-- 卷：**PostgreSQL** 数据；**`./server/vectorstore`**、**`./server/pdf`** 挂载到 server；mcpserver 挂载 **vectorstore**
-
----
-
-## 阿里云部署
-
-1. 使用 **`deploy-aliyun.sh`** 构建并推送 **webui / server / loginserver / mcpserver / nginx** 到 ACR（脚本内注释含变量示例）。  
-2. 在 ECS 配置 **`.env`**、**`MCP_SERVER_URL`**（HTTPS 域名 + `/mcp`）、**`docker-compose.aliyun.yml`** 与 **`IMAGE_TAG`**。  
-3. 执行 **`docker compose -f docker-compose.aliyun.yml up -d`**  
-
-若 **`docker push`** 经代理出现 **`broken pipe`**，可对 ACR 域名设置 **`NO_PROXY`** 或暂时关闭代理后重试。
-
----
-
-## 技术栈
-
-- **后端**：Python 3.12+、Flask、Gunicorn、FastAPI、Uvicorn、FastMCP、LangChain、LangGraph、FAISS、DashScope SDK  
-- **数据**：Redis、PostgreSQL  
-- **前端**：Next.js、React、TypeScript、Tailwind  
-- **网关**：Nginx  
-
----
 
 ## 版本说明
 
-- **v1.1.0**：**用户登录**（`loginserver` + Redis + PostgreSQL）；RAG 使用 **LangGraph**（`rag_graph`：检索、守卫、自检与重试）。
+- **v1.1.0**：**用户登录**（`loginserver` + Redis + PostgreSQL）；RAG 使用 **LangGraph**（`rag_graph`：上下文化、查询增强、检索、守卫、流式/非流式分支、自检与重试）。
 - **v1.0.0**：RAG 主要基于 **LangChain** 链式组装。
 
 ---

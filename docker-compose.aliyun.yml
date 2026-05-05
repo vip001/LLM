@@ -12,8 +12,12 @@ services:
   server:
     image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/llm-server:${IMAGE_TAG:-latest}
     container_name: llm-server
+    depends_on:
+      - postgres
     env_file:
       - .env
+    environment:
+      LANGGRAPH_CHECKPOINT_DB_URI: ${LANGGRAPH_CHECKPOINT_DB_URI:-postgresql://loginserver:loginserver@postgres:5432/loginserver?sslmode=disable}
     expose:
       - "5000"
     volumes:

@@ -21,7 +21,7 @@ export type RagStreamCallbacks = {
 export async function readRagStreamBody(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   cb?: RagStreamCallbacks
-): Promise<{ contexts: RagContextItem[]; answerText: string }> {
+): Promise<{ contexts: RagContextItem[]; answerText: string; sessionId?: string }> {
   const decoder = new TextDecoder();
   const buffer = new ByteBuffer();
 
@@ -41,7 +41,7 @@ export async function readRagStreamBody(
     buffered = buffer.view();
     const answerText = decoder.decode(buffered);
     if (answerText) cb?.onAnswerDelta?.(answerText);
-    return { contexts: [], answerText };
+    return { contexts: [], answerText, sessionId: undefined };
   }
 
   while (buffer.length < 8 && (await readChunk())) {}
@@ -57,14 +57,21 @@ export async function readRagStreamBody(
   buffered = buffer.view();
 
   const jsonBytes = buffered.subarray(8, 8 + jsonLen);
-  let meta: { contexts?: RagContextItem[] };
+  let meta: { contexts?: RagContextItem[]; session_id?: string };
   try {
-    meta = JSON.parse(decoder.decode(jsonBytes)) as { contexts?: RagContextItem[] };
+    meta = JSON.parse(decoder.decode(jsonBytes)) as {
+      contexts?: RagContextItem[];
+      session_id?: string;
+    };
   } catch {
     throw new Error("无法解析引用元数据 JSON");
   }
 
   const contexts = meta.contexts ?? [];
+  const sessionId =
+    typeof meta.session_id === "string" && meta.session_id.trim()
+      ? meta.session_id.trim()
+      : undefined;
   cb?.onRefs?.(contexts);
 
   const tail = buffered.subarray(8 + jsonLen);
@@ -91,5 +98,5 @@ export async function readRagStreamBody(
     cb?.onAnswerDelta?.(flushDelta);
   }
   const answerText = answerChunks.join("");
-  return { contexts, answerText };
+  return { contexts, answerText, sessionId };
 }

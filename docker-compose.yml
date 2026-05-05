@@ -14,8 +14,13 @@ services:
       context: .
       dockerfile: server/Dockerfile
     container_name: llm-server
+    depends_on:
+      - postgres
     env_file:
       - .env
+    environment:
+      # LangGraph 多轮会话 checkpoint（与 loginserver 共用同一库）；可在 .env 中覆盖 LANGGRAPH_CHECKPOINT_DB_URI
+      LANGGRAPH_CHECKPOINT_DB_URI: ${LANGGRAPH_CHECKPOINT_DB_URI:-postgresql://loginserver:loginserver@postgres:5432/loginserver?sslmode=disable}
     expose:
       - "5000"
     volumes:
@@ -25,18 +30,6 @@ services:
     networks:
       llm_net:
         ipv4_address: 172.28.240.11
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=4)",
-        ]
-      interval: 10s
-      timeout: 8s
-      retries: 12
-      start_period: 600s
 
   webui:
     build:

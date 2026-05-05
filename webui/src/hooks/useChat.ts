@@ -30,6 +30,8 @@ function useChatState() {
   const [error, setError] = useState<string | null>(null);
   const [saveHint, setSaveHint] = useState(false);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  /** 后端 LangGraph thread，多轮 RAG / 代词消解依赖此 ID 回传 */
+  const ragSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const el = messagesScrollRef.current;
@@ -45,6 +47,7 @@ function useChatState() {
     setError(null);
     setChatTitle("新对话");
     setActiveSidebarId("new");
+    ragSessionIdRef.current = null;
   }
 
   function clearChat() {
@@ -107,10 +110,18 @@ function useChatState() {
     setLoading(true);
 
     try {
+      const sid = ragSessionIdRef.current;
       const res = await fetch("/api/ask", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q, stream: true }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(sid ? { "X-Session-Id": sid } : {}),
+        },
+        body: JSON.stringify({
+          query: q,
+          stream: true,
+          ...(sid ? { session_id: sid } : {}),
+        }),
       });
 
       if (!res.ok) {
@@ -134,7 +145,11 @@ function useChatState() {
         return;
       }
 
-      await readRagStreamBody(reader, {
+      const headerSid = (
+        res.headers.get("X-Session-Id") ?? res.headers.get("X-Session-ID") ?? ""
+      ).trim();
+
+      const streamResult = await readRagStreamBody(reader, {
         onRefs: (contexts) => {
           setMessages((m) => {
             const i = m.findIndex((x) => x.id === asstId);
@@ -154,6 +169,10 @@ function useChatState() {
           });
         },
       });
+      const nextSid = streamResult.sessionId ?? headerSid;
+      if (nextSid) {
+        ragSessionIdRef.current = nextSid;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "网络错误");
       setMessages((m) => m.filter((x) => x.id !== asstId));

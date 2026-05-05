@@ -16,6 +16,9 @@ dependencies = [
     "langchain>=0.3.0",
     "langchain-core>=0.3.0",
     "langgraph>=0.2.0",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    # slim 镜像无系统 libpq；[binary] 提供预编译 libpq，否则 psycopg 无法加载
+    "psycopg[binary]>=3.2.0",
     "langchain-ollama>=0.2.0",
     "langchain-community>=0.3.0",
     "langchain-text-splitters>=0.3.0",

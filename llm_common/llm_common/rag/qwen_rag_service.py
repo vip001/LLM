@@ -2,13 +2,15 @@
 RAG 问答编排：向量检索、上下文与消息构造、调用 DashScope 对话模型（非 HTTP）。
 """
 # 在 import 可能触发 OpenMP 的库之前设置（与 ollama_qwen 入口一致）
+import atexit
 import os
 import traceback
+import uuid
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 
 from llm_common.paths import PathsUtil
 
@@ -16,26 +18,66 @@ PathsUtil.load_repo_dotenv()
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import Conn, PostgresSaver
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from llm_common.rag.dashscope_llm import DashScopeLLMClient
 from llm_common.rag.embedding_provider import EmbeddingProvider
 from llm_common.rag.query_enhance import get_strategy
-from llm_common.rag.rag_graph import build_rag_graph
+from llm_common.rag.rag_graph import RagState, build_rag_graph
 from llm_common.rag.vector_db import VectorDB
+
+
+_CONTEXTUALIZE_SYSTEM = """你是检索查询改写助手。根据对话历史与「当前用户句」，生成一条自包含的检索查询：
+补全代词与省略所指，使不依赖上文也能被检索系统理解。
+只输出这一条查询本身：不要解释、不要引号、不要前后缀、不要多余换行。"""
+
+
+def _build_langgraph_checkpointer() -> BaseCheckpointSaver[str]:
+    """
+    生产环境：设置 LANGGRAPH_CHECKPOINT_DB_URI（postgresql://…），使用 PostgresSaver。
+    未设置时回退 InMemorySaver（本地开发）。
+    """
+    uri = (os.environ.get("LANGGRAPH_CHECKPOINT_DB_URI") or "").strip()
+    if not uri:
+        return InMemorySaver()
+    max_size = int((os.environ.get("LANGGRAPH_CHECKPOINT_POOL_MAX") or "5").strip() or "5")
+    pool = ConnectionPool(
+        conninfo=uri,
+        min_size=1,
+        max_size=max(1, max_size),
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+        },
+    )
+    saver = PostgresSaver(cast(Conn, pool))
+    saver.setup()
+
+    def _close_pool() -> None:
+        try:
+            pool.close()
+        except Exception:
+            pass
+
+    atexit.register(_close_pool)
+    return saver
 
 
 class QwenRagService:
     """检索 + 查询增强 + Qwen 单次 / 流式作答。"""
 
-    def __init__(
-        self,
-        llm_client: DashScopeLLMClient | None = None,
-        embedding_provider: EmbeddingProvider | None = None,
-    ) -> None:
-        self._llm = llm_client or DashScopeLLMClient()
-        self._embedding_provider = embedding_provider or EmbeddingProvider()
-        self._graph = None
+    def __init__(self) -> None:
+        self._llm = DashScopeLLMClient()
+        self._embedding_provider = EmbeddingProvider()
+        self._checkpointer = _build_langgraph_checkpointer()
+        self._graph = build_rag_graph(self, self._checkpointer)
 
     def get_embeddings(self) -> Embeddings:
         return self._embedding_provider.get_embeddings()
@@ -100,7 +142,9 @@ class QwenRagService:
         query: str,
         context: str,
         contexts: list[dict[str, Any]],
-    ) -> list[SystemMessage | HumanMessage]:
+        *,
+        prior_messages: list[BaseMessage] | None = None,
+    ) -> list[BaseMessage]:
         image_refs = self.extract_image_refs(contexts)
         system = SystemMessage(content=self._get_system_prompt(context))
         if image_refs:
@@ -113,8 +157,56 @@ class QwenRagService:
                 blocks.append(
                     {"type": "image_url", "image_url": {"url": image_ref}},
                 )
-            return [system, HumanMessage(content=blocks)]
-        return [system, HumanMessage(content=query)]
+            user_msg: BaseMessage = HumanMessage(content=blocks)
+        else:
+            user_msg = HumanMessage(content=query)
+        if not prior_messages:
+            return [system, user_msg]
+        trimmed: list[BaseMessage] = []
+        for m in prior_messages[-10:]:
+            if isinstance(m, (HumanMessage, AIMessage)):
+                trimmed.append(m)
+        return [system, *trimmed, user_msg]
+
+    def contextualize_retrieval_query(
+        self,
+        messages: list[BaseMessage],
+        latest_user_text: str,
+        *,
+        max_history_messages: int = 6,
+    ) -> str:
+        q = (latest_user_text or "").strip()
+        if not q:
+            return ""
+        prior = list(messages)
+        if prior and isinstance(prior[-1], HumanMessage):
+            prior = prior[:-1]
+        if not prior:
+            return q
+        lines: list[str] = []
+        for m in prior[-max_history_messages:]:
+            if isinstance(m, HumanMessage):
+                role = "用户"
+            elif isinstance(m, AIMessage):
+                role = "助手"
+            else:
+                continue
+            text = self.message_content_to_text(m.content).strip()
+            if text:
+                lines.append(f"{role}: {text}")
+        hist = "\n".join(lines).strip()
+        if not hist:
+            return q
+        user_block = f"对话历史：\n{hist}\n\n当前用户句：{q}"
+        out = self._llm.invoke(
+            [
+                SystemMessage(content=_CONTEXTUALIZE_SYSTEM),
+                HumanMessage(content=user_block),
+            ]
+        )
+        rewritten = self.message_content_to_text(getattr(out, "content", out)).strip()
+        print("rewritten:", rewritten,";originquery:",q)
+        return rewritten or q
 
     def _search_docs(
         self,
@@ -338,25 +430,43 @@ class QwenRagService:
             return "".join(parts)
         return str(content or "")
 
+    @staticmethod
+    def _rag_graph_invoke_input(
+        query: str,
+        k: int,
+        *,
+        stream: bool = False,
+    ) -> RagState:
+        """LangGraph 入口 state：须含 query，供 prepare / contextualize / generate 等节点使用。"""
+        out: RagState = {
+            "messages": [HumanMessage(content=query)],
+            "k": k,
+            "max_retries": 1,
+            "query": query,
+        }
+        if stream:
+            out["stream"] = True
+        return out
+
     def ask_once(
         self,
         query: str,
         k: int = 4,
         trace: bool = False,
+        *,
+        thread_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._graph is None:
-            self._graph = build_rag_graph(self)
+        tid = thread_id or uuid.uuid4().hex
+        cfg: RunnableConfig = {"configurable": {"thread_id": tid}}
         result = self._graph.invoke(
-            {
-                "query": query,
-                "k": k,
-                "max_retries": 1,
-            }
+            self._rag_graph_invoke_input(query, k),
+            config=cfg,
         )
         contexts = result.get("contexts", [])
         out = {
             "answer": result.get("answer", ""),
             "contexts": contexts,
+            "session_id": tid,
         }
         if trace:
             out["trace"] = self._build_trace(result)
@@ -370,6 +480,7 @@ class QwenRagService:
         return {
             "retrieval_mode": retrieval_mode,
             "retrieval_text": result.get("retrieval_text", ""),
+            "retrieval_query": (result.get("retrieval_query") or "").strip(),
             "contexts_count": len(contexts),
             "image_refs_count": len(QwenRagService.extract_image_refs(contexts)),
             "confidence": float(result.get("confidence", 0.0)),
@@ -384,34 +495,37 @@ class QwenRagService:
         query: str,
         k: int = 4,
         trace: bool = False,
-    ) -> tuple[list[dict[str, Any]], Iterator[Any], dict[str, Any] | None]:
+        *,
+        thread_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], Iterator[Any], dict[str, Any]]:
         """
-        返回 (检索上下文列表, 模型输出文本片段迭代器)。
-        便于 HTTP 层在流式正文前附加 refs，供前端展示引用文档与图片。
+        返回 (检索上下文列表, 模型输出文本片段迭代器, meta)。
+        meta 含 session_id；若 trace 为 True 则另含 trace 字段。
         """
-        if self._graph is None:
-            self._graph = build_rag_graph(self)
-        #graph_view = self._graph.get_graph()
-        #graph_view.draw_png(output_file_path="rag_graph.png")
-        #Path("rag_graph.mermaid").write_text(graph_view.draw_mermaid(), encoding="utf-8")
-        result = self._graph.invoke(
-            {
-                "query": query,
-                "k": k,
-                "max_retries": 1,
-                "stream": True,
-            }
+        tid = thread_id or uuid.uuid4().hex
+        compiled = self._graph
+        cfg: RunnableConfig = {"configurable": {"thread_id": tid}}
+        result = compiled.invoke(
+            self._rag_graph_invoke_input(query, k, stream=True),
+            config=cfg,
         )
         contexts = result.get("contexts", [])
         messages = result.get("llm_messages", [])
-        trace_data = self._build_trace(result) if trace else None
+        meta: dict[str, Any] = {"session_id": tid}
+        if trace:
+            meta["trace"] = self._build_trace(result)
         print("images:", len(self.extract_image_refs(contexts)))
         refusal_answer = (result.get("answer") or "").strip()
         gen = self._llm.stream(messages) if messages else None
 
         def text_iter() -> Iterator[Any]:
+            parts: list[str] = []
             if refusal_answer:
                 yield refusal_answer
+                compiled.update_state(
+                    cfg,
+                    {"messages": [AIMessage(content=refusal_answer)]},
+                )
                 return
             if gen is None:
                 return
@@ -420,11 +534,24 @@ class QwenRagService:
                     chunk = next(gen)
                     text = self._llm.chunk_to_text(chunk)
                     if text:
+                        parts.append(text)
                         yield text
                 except StopIteration:
+                    full = "".join(parts)
+                    if full.strip():
+                        compiled.update_state(
+                            cfg,
+                            {"messages": [AIMessage(content=full)]},
+                        )
                     return
-                except Exception as e:
+                except Exception:
                     traceback.print_exc()
+                    full = "".join(parts)
+                    if full.strip():
+                        compiled.update_state(
+                            cfg,
+                            {"messages": [AIMessage(content=full)]},
+                        )
                     return
 
-        return contexts, text_iter(), trace_data
+        return contexts, text_iter(), meta

@@ -11,6 +11,10 @@ API 使用：
   GET  /ask?query=MMKV的用法
   POST /ask   Body: {"query": "MMKV的用法"}
 
+多轮对话（LangGraph checkpointer + 服务端会话）：
+  - 首次请求可不传 session_id，响应 JSON 含 session_id，或流式时见首包 JSON 字段 session_id / 响应头 X-Session-Id。
+  - 后续请求传入同一 session_id：Query 参数、JSON 字段 session_id，或请求头 X-Session-Id。
+
 前置条件：
 1. pip 已安装 dashscope、langchain-community（见 server/requirements.txt）
 2. 项目根目录 .env 中配置 DASHSCOPE_API_KEY（与官方文档一致）
@@ -20,6 +24,9 @@ API 使用：
    - DASHSCOPE_CHAT_MODEL：文本对话模型，默认 qwen3.5-plus（百炼 DashScope）
    - DASHSCOPE_VL_MODEL：检索结果含图片时使用，默认 qwen3.5-plus（走 MultiModalConversation，与文档示例一致）
 4. 向量检索 / HyDE 仍使用 EmbeddingProvider（如 Ollama 或 DashScope 嵌入），与对话模型独立
+5. 多轮会话持久化（生产）：环境变量 LANGGRAPH_CHECKPOINT_DB_URI 指向 PostgreSQL（如 Docker 默认
+   postgresql://loginserver:loginserver@postgres:5432/loginserver?sslmode=disable，与 loginserver 应用共用库）。未设置时使用内存 checkpoint。
+   可选 LANGGRAPH_CHECKPOINT_POOL_MAX 调整连接池大小（默认 5）。
 """
 # 必须在 import 任何使用 OpenMP 的库（torch/faiss/numpy 等）之前设置，避免多份 libomp 冲突导致 OMP Error #15
 import json
@@ -31,6 +38,20 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from flask import Flask, request, jsonify, Response
 from typing import Any
+
+
+def _session_id_from_request() -> str | None:
+    h = (request.headers.get("X-Session-Id") or request.headers.get("X-Session-ID") or "").strip()
+    if h:
+        return h
+    if request.method == "GET":
+        sid = (request.args.get("session_id") or request.args.get("sessionId") or "").strip()
+        return sid or None
+    body = request.get_json(silent=True) or {}
+    sid = (body.get("session_id") or body.get("sessionId") or "")
+    if isinstance(sid, str) and sid.strip():
+        return sid.strip()
+    return None
 
 from llm_common.rag.qwen_rag_service import QwenRagService
 
@@ -121,14 +142,18 @@ class AskHttpController:
 
         if not query:
             return jsonify({"error": "缺少参数 query"}), 400
+        session_id = _session_id_from_request()
         try:
             if stream:
-                contexts, stream_gen, trace_data = self._rag.ask_stream(
-                    query, trace=trace
+                contexts, stream_gen, meta = self._rag.ask_stream(
+                    query, trace=trace, thread_id=session_id
                 )
-                refs_payload: dict[str, Any] = {"contexts": contexts}
-                if trace and trace_data is not None:
-                    refs_payload["trace"] = trace_data
+                refs_payload: dict[str, Any] = {
+                    "contexts": contexts,
+                    "session_id": meta["session_id"],
+                }
+                if trace and meta.get("trace") is not None:
+                    refs_payload["trace"] = meta["trace"]
                 refs_bytes = json.dumps(refs_payload, ensure_ascii=False).encode("utf-8")
                 header = _STREAM_REFS_MAGIC + struct.pack(">I", len(refs_bytes)) + refs_bytes
 
@@ -147,9 +172,13 @@ class AskHttpController:
                 return Response(
                     stream_refs_then_text(),
                     mimetype="application/octet-stream",
+                    headers={"X-Session-Id": meta["session_id"]},
                 )
             print(f"rag askOnce: {query}")
-            return jsonify(self._rag.ask_once(query, trace=trace))
+            payload = self._rag.ask_once(query, trace=trace, thread_id=session_id)
+            resp = jsonify(payload)
+            resp.headers["X-Session-Id"] = payload.get("session_id", "")
+            return resp
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except RuntimeError as e:
@@ -185,7 +214,7 @@ def main() -> None:
     last_e: BaseException | None = None
     for attempt in range(OLLAMA_502_RETRY_TIMES):
         try:
-            _ctx, _gen, _trace = _rag.ask_stream("MMKV和sharedpreferences的性能对比")
+            _ctx, _gen, _meta = _rag.ask_stream("MMKV和sharedpreferences的性能对比")
             for part in _gen:
                 print(part, end="", flush=True)
             print()

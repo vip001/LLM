@@ -20,7 +20,11 @@ COPY mcpserver/ /app/mcpserver/
 
 WORKDIR /app/mcpserver
 
-RUN pip install -e .
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    --default-timeout=300 \
+    -e .
 
 EXPOSE 8001
 

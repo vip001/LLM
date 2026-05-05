@@ -1,19 +1,24 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict, cast
 
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 
 from llm_common.rag.query_enhance_agent import QueryEnhanceToolAgent
 
 if TYPE_CHECKING:
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+
     from llm_common.rag.qwen_rag_service import QwenRagService
 
 
 class RagState(TypedDict, total=False):
+    messages: Annotated[list[Any], add_messages]
     query: str
+    retrieval_query: str
     k: int
     max_retries: int
     retry_count: int
@@ -32,12 +37,16 @@ class RagState(TypedDict, total=False):
     refusal_reason: str
 
 
-def build_rag_graph(service: "QwenRagService"):
+def build_rag_graph(
+    service: "QwenRagService",
+    checkpointer: "BaseCheckpointSaver[str] | None" = None,
+):
     enhance_agent = QueryEnhanceToolAgent.from_rag_service(service)
 
     def prepare_node(state: RagState) -> RagState:
+        q = (state.get("query") or "").strip()
         return {
-            "query": (state.get("query") or "").strip(),
+            "query": q,
             "k": int(state.get("k", 4)),
             "max_retries": int(state.get("max_retries", 1)),
             "retry_count": int(state.get("retry_count", 0)),
@@ -47,8 +56,14 @@ def build_rag_graph(service: "QwenRagService"):
             "refusal_reason": "",
         }
 
-    def enhance_query_node(state: RagState) -> RagState:
+    def contextualize_node(state: RagState) -> RagState:
+        msgs = state.get("messages") or []
         q = state.get("query") or ""
+        rq = service.contextualize_retrieval_query(msgs, q)
+        return {"retrieval_query": rq}
+
+    def enhance_query_node(state: RagState) -> RagState:
+        q = (state.get("retrieval_query") or state.get("query") or "").strip()
         inp = enhance_agent.get_retrieval_input(q)
         return {
             "retrieval_text": inp.text or q,
@@ -96,10 +111,20 @@ def build_rag_graph(service: "QwenRagService"):
         }
 
     def generate_node(state: RagState) -> RagState:
+        msgs = state.get("messages") or []
+        prior: list[BaseMessage] | None = None
+        if len(msgs) >= 2:
+            prior = []
+            for m in msgs[:-1]:
+                if isinstance(m, (HumanMessage, AIMessage)):
+                    prior.append(m)
+            if not prior:
+                prior = None
         messages = service._build_llm_messages(
             state.get("query") or "",
             state.get("prompt_context", "（未检索到相关文档）"),
             state.get("contexts", []),
+            prior_messages=prior,
         )
         if state.get("stream", False):
             return {"llm_messages": messages}
@@ -138,13 +163,14 @@ def build_rag_graph(service: "QwenRagService"):
         }
 
     def finalize_node(state: RagState) -> RagState:
-        if state.get("answer"):
+        if state.get("stream", False):
+            # 流式：助手回合在 QwenRagService 流结束（或拒答短路）后 update_state，避免与 finalize 重复写入。
             return {}
-        if state.get("stream", False) and not state.get("refusal_reason"):
-            # Streaming mode emits answer chunks outside graph state; avoid premature fallback.
-            return {}
+        ans = (state.get("answer") or "").strip()
+        if ans:
+            return {"messages": [AIMessage(content=ans)]}
         reason = state.get("refusal_reason") or "当前信息不足，无法给出可靠回答。"
-        return {"answer": reason}
+        return {"answer": reason, "messages": [AIMessage(content=reason)]}
 
     def route_after_retrieval_guard(state: RagState) -> str:
         if state.get("refusal_reason"):
@@ -163,6 +189,7 @@ def build_rag_graph(service: "QwenRagService"):
 
     graph = StateGraph(RagState)
     graph.add_node("prepare", prepare_node)
+    graph.add_node("contextualize", contextualize_node)
     graph.add_node("enhance_query", enhance_query_node)
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("retrieval_guard", retrieval_guard_node)
@@ -172,7 +199,8 @@ def build_rag_graph(service: "QwenRagService"):
     graph.add_node("finalize", finalize_node)
 
     graph.add_edge(START, "prepare")
-    graph.add_edge("prepare", "enhance_query")
+    graph.add_edge("prepare", "contextualize")
+    graph.add_edge("contextualize", "enhance_query")
     graph.add_edge("enhance_query", "retrieve")
     graph.add_edge("retrieve", "retrieval_guard")
     graph.add_conditional_edges(
@@ -201,4 +229,4 @@ def build_rag_graph(service: "QwenRagService"):
     )
     graph.add_edge("retry", "enhance_query")
     graph.add_edge("finalize", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)

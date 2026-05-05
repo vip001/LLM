@@ -44,6 +44,19 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const query = (body?.query ?? "").trim();
     const stream = body?.stream ?? true;
+    const sessionFromBody = (
+      typeof body?.session_id === "string"
+        ? body.session_id
+        : typeof body?.sessionId === "string"
+          ? body.sessionId
+          : ""
+    ).trim();
+    const sessionFromHeader = (
+      request.headers.get("X-Session-Id") ??
+      request.headers.get("X-Session-ID") ??
+      ""
+    ).trim();
+    const sessionId = sessionFromBody || sessionFromHeader;
     if (!query) {
       return Response.json(
         errPayload("MISSING_QUERY", "缺少参数 query"),
@@ -52,12 +65,22 @@ export async function POST(request: NextRequest) {
     }
 
     const target = flaskAskUrl();
+    const upstreamHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (sessionId) {
+      upstreamHeaders["X-Session-Id"] = sessionId;
+    }
+    const flaskBody: Record<string, unknown> = { query, stream };
+    if (sessionId) {
+      flaskBody.session_id = sessionId;
+    }
     let res: Response;
     try {
       res = await fetch(target, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, stream }),
+        headers: upstreamHeaders,
+        body: JSON.stringify(flaskBody),
       });
     } catch (fetchErr) {
       const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
@@ -91,14 +114,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const passthrough = new Headers({
+      "Content-Type": res.headers.get("Content-Type") ?? "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    const flaskSid = res.headers.get("X-Session-Id") ?? res.headers.get("X-Session-ID");
+    if (flaskSid) {
+      passthrough.set("X-Session-Id", flaskSid);
+    }
     return new Response(res.body, {
       status: 200,
-      headers: {
-        "Content-Type": res.headers.get("Content-Type") ?? "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-      },
+      headers: passthrough,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "代理请求失败";
