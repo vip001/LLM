@@ -466,7 +466,7 @@ class QwenRagService:
         out = {
             "answer": result.get("answer", ""),
             "contexts": contexts,
-            "session_id": tid,
+            "sessionId": tid,
         }
         if trace:
             out["trace"] = self._build_trace(result)
@@ -500,7 +500,7 @@ class QwenRagService:
     ) -> tuple[list[dict[str, Any]], Iterator[Any], dict[str, Any]]:
         """
         返回 (检索上下文列表, 模型输出文本片段迭代器, meta)。
-        meta 含 session_id；若 trace 为 True 则另含 trace 字段。
+        meta 含 sessionId；若 trace 为 True 则另含 trace 字段。
         """
         tid = thread_id or uuid.uuid4().hex
         compiled = self._graph
@@ -511,7 +511,7 @@ class QwenRagService:
         )
         contexts = result.get("contexts", [])
         messages = result.get("llm_messages", [])
-        meta: dict[str, Any] = {"session_id": tid}
+        meta: dict[str, Any] = {"sessionId": tid}
         if trace:
             meta["trace"] = self._build_trace(result)
         print("images:", len(self.extract_image_refs(contexts)))

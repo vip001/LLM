@@ -12,8 +12,8 @@ API 使用：
   POST /ask   Body: {"query": "MMKV的用法"}
 
 多轮对话（LangGraph checkpointer + 服务端会话）：
-  - 首次请求可不传 session_id，响应 JSON 含 session_id，或流式时见首包 JSON 字段 session_id / 响应头 X-Session-Id。
-  - 后续请求传入同一 session_id：Query 参数、JSON 字段 session_id，或请求头 X-Session-Id。
+  - 首次请求可不传 sessionId，响应 JSON 或流式首包 JSON 均含字段 sessionId。
+  - 后续请求传入同一 ID：GET 使用 Query 参数 sessionId，POST 使用 JSON 字段 sessionId。
 
 前置条件：
 1. pip 已安装 dashscope、langchain-community（见 server/requirements.txt）
@@ -41,14 +41,11 @@ from typing import Any
 
 
 def _session_id_from_request() -> str | None:
-    h = (request.headers.get("X-Session-Id") or request.headers.get("X-Session-ID") or "").strip()
-    if h:
-        return h
     if request.method == "GET":
-        sid = (request.args.get("session_id") or request.args.get("sessionId") or "").strip()
+        sid = (request.args.get("sessionId") or "").strip()
         return sid or None
     body = request.get_json(silent=True) or {}
-    sid = (body.get("session_id") or body.get("sessionId") or "")
+    sid = body.get("sessionId")
     if isinstance(sid, str) and sid.strip():
         return sid.strip()
     return None
@@ -150,7 +147,7 @@ class AskHttpController:
                 )
                 refs_payload: dict[str, Any] = {
                     "contexts": contexts,
-                    "session_id": meta["session_id"],
+                    "sessionId": meta["sessionId"],
                 }
                 if trace and meta.get("trace") is not None:
                     refs_payload["trace"] = meta["trace"]
@@ -172,13 +169,10 @@ class AskHttpController:
                 return Response(
                     stream_refs_then_text(),
                     mimetype="application/octet-stream",
-                    headers={"X-Session-Id": meta["session_id"]},
                 )
             print(f"rag askOnce: {query}")
             payload = self._rag.ask_once(query, trace=trace, thread_id=session_id)
-            resp = jsonify(payload)
-            resp.headers["X-Session-Id"] = payload.get("session_id", "")
-            return resp
+            return jsonify(payload)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except RuntimeError as e:

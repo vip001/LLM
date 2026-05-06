@@ -115,12 +115,11 @@ function useChatState() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(sid ? { "X-Session-Id": sid } : {}),
         },
         body: JSON.stringify({
           query: q,
           stream: true,
-          ...(sid ? { session_id: sid } : {}),
+          ...(sid ? { sessionId: sid } : {}),
         }),
       });
 
@@ -145,10 +144,6 @@ function useChatState() {
         return;
       }
 
-      const headerSid = (
-        res.headers.get("X-Session-Id") ?? res.headers.get("X-Session-ID") ?? ""
-      ).trim();
-
       const streamResult = await readRagStreamBody(reader, {
         onRefs: (contexts) => {
           setMessages((m) => {
@@ -169,7 +164,7 @@ function useChatState() {
           });
         },
       });
-      const nextSid = streamResult.sessionId ?? headerSid;
+      const nextSid = streamResult.sessionId;
       if (nextSid) {
         ragSessionIdRef.current = nextSid;
       }

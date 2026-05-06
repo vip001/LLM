@@ -7,7 +7,7 @@
 ## 功能概览
 
 - **RAG 与图编排**：`QwenRagService` 以 LangGraph **`StateGraph`**（[`rag_graph.py`](llm_common/llm_common/rag/rag_graph.py)）统一主链：FAISS 向量检索、图文块入库与检索、多模态嵌入（可选）、上下文拼装与 DashScope 对话（流式 / 非流式）均在图内完成；**查询增强**由图节点 **[`QueryEnhanceToolAgent`](llm_common/llm_common/rag/query_enhance_agent.py)** 在 **Query2Doc** 与 **HyDE** 间自动二选一（工具型 Agent）。节点顺序：**准备** → **检索查询上下文化**（多轮会话得到 `retrieval_query`）→ **查询增强** → **检索** → **检索守卫** → **生成** → **自检**（仅非流式）→ **有限次重试**（低置信时回到查询增强）→ **收尾**（写入助手消息）。**短路**：守卫发现无上下文则直接收尾；流式生成跳过自检直接收尾。
-- **多轮对话**：`session_id` / 请求头 `X-Session-Id` 对应 LangGraph thread；生产环境可通过 `LANGGRAPH_CHECKPOINT_DB_URI` 写入 Postgres。
+- **多轮对话**：请求参数 **`sessionId`**（GET Query 或 POST JSON）对应 LangGraph thread；生产环境可通过 `LANGGRAPH_CHECKPOINT_DB_URI` 写入 Postgres。
 - **Web UI**：Next.js：对话、登录、MCP Token 配置说明。
 - **账号体系**：邮箱验证码登录（OTP）、Redis 会话、Postgres 持久化；JWT 子路由；**MCP 访问令牌**（`/auth/mcp-token`）与 RSA 配置表 `mcp_jwt_config`。
 - **MCP**：JWT 鉴权后暴露 `retrieve_rag_contexts`（可选手动指定 `query2doc` / `hyde`）。
@@ -77,10 +77,10 @@ flowchart LR
 
 | 路由 | 说明 |
 |------|------|
-| `GET/POST /ask` | 参数 **`query`**（必填）；**`stream`** 默认 `true`：`false` 时返回 JSON（`ask_once`）；**`trace`** 可选；**`session_id` / `sessionId`** 或头 **`X-Session-Id`** 多轮会话。响应头 **`X-Session-Id`** 带回 thread id。 |
+| `GET/POST /ask` | 参数 **`query`**（必填）；**`stream`** 默认 `true`：`false` 时返回 JSON（`ask_once`）；**`trace`** 可选；多轮会话传 **`sessionId`**（GET Query 或 POST JSON）。响应体 JSON（非流式）或流式首包 JSON 中的 **`sessionId`** 带回 LangGraph thread id；**不**再通过响应头传递会话 id。 |
 | `GET /` | `{"status":"ok"}` 健康检查 |
 
-**流式模式**（`stream=true`）：`Content-Type: application/octet-stream`，首段为魔数 `RAG\x01` + 4 字节大端 JSON 长度 + UTF-8 JSON（含 `contexts`、`session_id`，可选 `trace`），随后为回答 token 的 UTF-8 字节流。
+**流式模式**（`stream=true`）：`Content-Type: application/octet-stream`，首段为魔数 `RAG\x01` + 4 字节大端 JSON 长度 + UTF-8 JSON（含 `contexts`、`sessionId`，可选 `trace`），随后为回答 token 的 UTF-8 字节流。
 
 **本地开发**：`python server/ollama_qwen.py serve`，默认 `FLASK_HOST`/`FLASK_PORT` 可调。
 
@@ -104,7 +104,7 @@ flowchart LR
 |------|------|
 | [`src/app/page.tsx`](webui/src/app/page.tsx) | 聊天主页 |
 | [`src/app/settings/`](webui/src/app/settings/) | 设置页（含 MCP Token 区块） |
-| `POST /api/ask` | 服务端转发至 `FLASK_ASK_URL`，体字段 `query`、`stream`、`session_id`，转发 `X-Session-Id` |
+| `POST /api/ask` | 服务端转发至 `FLASK_ASK_URL`，体字段 `query`、`stream`、可选 `sessionId`；流式时 **`sessionId`** 在首包 JSON 中（不依赖响应头）。 |
 
 详见 [webui/README.md](webui/README.md)。
 

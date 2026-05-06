@@ -57,11 +57,11 @@ export async function readRagStreamBody(
   buffered = buffer.view();
 
   const jsonBytes = buffered.subarray(8, 8 + jsonLen);
-  let meta: { contexts?: RagContextItem[]; session_id?: string };
+  let meta: { contexts?: RagContextItem[]; sessionId?: string };
   try {
     meta = JSON.parse(decoder.decode(jsonBytes)) as {
       contexts?: RagContextItem[];
-      session_id?: string;
+      sessionId?: string;
     };
   } catch {
     throw new Error("无法解析引用元数据 JSON");
@@ -69,8 +69,8 @@ export async function readRagStreamBody(
 
   const contexts = meta.contexts ?? [];
   const sessionId =
-    typeof meta.session_id === "string" && meta.session_id.trim()
-      ? meta.session_id.trim()
+    typeof meta.sessionId === "string" && meta.sessionId.trim()
+      ? meta.sessionId.trim()
       : undefined;
   cb?.onRefs?.(contexts);
 
