@@ -1,17 +1,29 @@
 import { existsSync } from "node:fs";
 
 import { NextRequest } from "next/server";
+import * as grpc from "@grpc/grpc-js";
+
+import { askViaGrpc, grpcCodeToHttpStatus } from "@/lib/grpcAsk";
 
 const isDev = process.env.NODE_ENV === "development";
 
 /**
- * 1) 环境变量 FLASK_ASK_URL（键名拼接，减少被构建器内联）
+ * 设置 GRPC_ASK_ADDR（如 server:50051）时，Next 通过 gRPC 流式调用后端，与 Flask /ask 流式体格式一致。
+ * 未设置时回退 HTTP（FLASK_ASK_URL）。
+ */
+function grpcAskAddr(): string | null {
+  const u = process.env.GRPC_ASK_ADDR;
+  if (typeof u === "string" && u.trim()) return u.trim();
+  else return "127.0.0.1:50051"
+}
+
+/**
+ * 1) 环境变量 FLASK_ASK_URL
  * 2) Docker 内默认走 compose 服务名 server（与 docker-compose 中 Flask 服务名一致）
  * 3) 非 Docker 的生产回退固定网段 IP；本地开发默认 127.0.0.1
  */
 function flaskAskUrl(): string {
-  const k = "FLASK" + "_" + "ASK" + "_" + "URL";
-  const u = (process.env as Record<string, string | undefined>)[k];
+  const u = process.env.FLASK_ASK_URL;
   if (typeof u === "string" && u.trim()) return u.trim();
   if (existsSync("/.dockerenv")) {
     return "http://server:5000/ask";
@@ -44,6 +56,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const query = (body?.query ?? "").trim();
     const stream = body?.stream ?? true;
+    const trace = Boolean(body?.trace);
     const sessionId =
       typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
     if (!query) {
@@ -53,11 +66,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const grpcAddr = grpcAskAddr();
+    if (grpcAddr) {
+      try {
+        console.log("grpcAddr:",grpcAddr);
+        return await askViaGrpc({
+          address: grpcAddr,
+          query,
+          stream,
+          trace,
+          sessionId,
+        });
+      } catch (grpcErr) {
+        const ge = grpcErr as grpc.ServiceError;
+        const code = typeof ge?.code === "number" ? ge.code : grpc.status.UNKNOWN;
+        const status = grpcCodeToHttpStatus(code);
+        const msg = ge?.message || "gRPC 调用失败";
+        console.error("[api/ask] gRPC 错误:", code, msg, grpcAddr);
+        return Response.json(
+          errPayload(
+            "GRPC_ERROR",
+            msg,
+            isDev ? { address: grpcAddr, code } : undefined
+          ),
+          { status: status >= 400 ? status : 502 }
+        );
+      }
+    }
+
     const target = flaskAskUrl();
     const upstreamHeaders: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    const flaskBody: Record<string, unknown> = { query, stream };
+    const flaskBody: Record<string, unknown> = { query, stream, trace };
     if (sessionId) {
       flaskBody.sessionId = sessionId;
     }

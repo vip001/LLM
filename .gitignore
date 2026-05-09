@@ -28,8 +28,9 @@ webui/next-env.d.ts
 server/vectorstore/
 server/chromastore/
 server/__pycache__/
+server/grpc_generated/
 loginserver/__init__.py
-
+webui/src/gen/
 
 # MCP dev JWT keypair (generated locally)
 # 环境变量文件（包含密钥、数据库信息等）

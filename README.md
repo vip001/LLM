@@ -1,6 +1,6 @@
 # LLM RAG 问答工程
 
-基于 **阿里云百炼 DashScope（Qwen）** 的端到端 RAG：FAISS 向量检索、查询增强（HyDE / Query2Doc 等）、**LangGraph** 编排与多轮会话（内存或 **PostgreSQL checkpoint**）。配套 **Next.js** 聊天前端、**FastAPI 登录与会话**、以及 **FastMCP** 暴露的 RAG 检索工具（供 Cursor 等 MCP 客户端使用）。
+基于 **阿里云百炼 DashScope（Qwen）** 的端到端 RAG：FAISS 向量检索、查询增强（HyDE / Query2Doc 等）、**LangGraph** 编排与多轮会话（内存或 **PostgreSQL checkpoint**）。配套 **Next.js** 聊天前端（`/api/ask` 可经 **gRPC** 或 HTTP 转发 RAG）、**FastAPI 登录与会话**、以及 **FastMCP** 暴露的 RAG 检索工具（供 Cursor 等 MCP 客户端使用）。
 
 ---
 
@@ -11,6 +11,7 @@
 - **Web UI**：Next.js：对话、登录、MCP Token 配置说明。
 - **账号体系**：邮箱验证码登录（OTP）、Redis 会话、Postgres 持久化；JWT 子路由；**MCP 访问令牌**（`/auth/mcp-token`）与 RSA 配置表 `mcp_jwt_config`。
 - **MCP**：JWT 鉴权后暴露 `retrieve_rag_contexts`（可选手动指定 `query2doc` / `hyde`）。
+
 
 ---
 
@@ -23,7 +24,8 @@ flowchart LR
   WebUI[webui :3000]
   Login[loginserver :8000]
   MCP[mcpserver :8001]
-  Flask[server :5000]
+  Flask[server Flask :5000]
+  GrpcAsk[server gRPC :50051]
   PG[(PostgreSQL)]
   Redis[(Redis)]
 
@@ -31,16 +33,18 @@ flowchart LR
   Nginx -->|"/"| WebUI
   Nginx -->|"/auth/"| Login
   Nginx -->|"/mcp"| MCP
-  WebUI -->|FLASK_ASK_URL| Flask
+  WebUI -->|GRPC_ASK_ADDR| GrpcAsk
+  WebUI -.->|FLASK_ASK_URL 备用| Flask
   Login --> PG
   Login --> Redis
   MCP --> PG
   Flask --> PG
+  GrpcAsk --> PG
 ```
 
 | 服务 | 镜像/构建 | 说明 |
 |------|-----------|------|
-| **server** | `server/Dockerfile` | Gunicorn 运行 `ollama_qwen:app`，端口 **5000**（Compose 内仅 expose） |
+| **server** | `server/Dockerfile` | Gunicorn 运行 `ollama_qwen:app`，端口 **5000**；并行 **gRPC** `AskService`，端口 **50051**（[`run_services.sh`](server/run_services.sh)） |
 | **webui** | `webui/Dockerfile` | Next.js 16，端口 **3000** |
 | **loginserver** | `loginserver/Dockerfile` | FastAPI + Uvicorn，宿主机 **8000** |
 | **mcpserver** | `mcpserver/Dockerfile` | `llm-mcp`（FastMCP streamable-http），宿主机 **8001** |
@@ -57,7 +61,8 @@ flowchart LR
 | 路径 | 内容 |
 |------|------|
 | [`llm_common/`](llm_common/) | 共享库：`rag/`（`qwen_rag_service`、`rag_graph`、`vector_db`、`embedding_provider`、`dashscope_llm` 等）、`postgres_store.py`、`mcp_jwt_dao.py`、`paths.py` |
-| [`server/`](server/) | Flask 入口 [`ollama_qwen.py`](server/ollama_qwen.py)、`vectorstore/`、`pdf/`、索引脚本 [`pdf_to_chroma.py`](server/pdf_to_chroma.py)、[`check_ollama_embed.py`](server/check_ollama_embed.py) |
+| [`server/`](server/) | Flask 入口 [`ollama_qwen.py`](server/ollama_qwen.py)、[`grpc_ask_server.py`](server/grpc_ask_server.py)、[`ask_handlers.py`](server/ask_handlers.py)、[`run_services.sh`](server/run_services.sh)、`vectorstore/`、`pdf/`、索引脚本 [`pdf_to_chroma.py`](server/pdf_to_chroma.py)、[`check_ollama_embed.py`](server/check_ollama_embed.py) |
+| [`proto/`](proto/) | [`ask.proto`](proto/ask.proto)：`AskService`（`AskStream` / `AskOnce`） |
 | [`webui/`](webui/) | Next.js App Router，[`src/app/api/ask/route.ts`](webui/src/app/api/ask/route.ts) 代理后端 |
 | [`loginserver/`](loginserver/) | [`loginserver.py`](loginserver/loginserver.py)、`jwt_api`、`mcp_token_api`、`dao/` |
 | [`mcpserver/`](mcpserver/) | [`llm_mcpserver/mcpserver.py`](mcpserver/llm_mcpserver/mcpserver.py)，工具 `retrieve_rag_contexts` |
@@ -84,6 +89,23 @@ flowchart LR
 
 **本地开发**：`python server/ollama_qwen.py serve`，默认 `FLASK_HOST`/`FLASK_PORT` 可调。
 
+### gRPC `AskService` — [`proto/ask.proto`](proto/ask.proto)、[`server/grpc_ask_server.py`](server/grpc_ask_server.py)
+
+与 Flask **`/ask`** 同一套 RAG 逻辑（[`server/ask_handlers.py`](server/ask_handlers.py)）。默认监听 **`GRPC_BIND`**（默认 `0.0.0.0`）+ **`GRPC_PORT`**（默认 **50051**）。
+
+| RPC | 说明 |
+|-----|------|
+| `AskStream` | `AskRequest`：`query`、`stream`、`trace`、`session_id`（对应 HTTP `sessionId`）；响应为流式 `AskStreamChunk.body_chunk`，拼接后与 HTTP 流式体格式一致。 |
+| `AskOnce` | 同上请求；`AskOnceResponse.json_body` 为非流式 JSON 字节（与 `stream=false` 的 `/ask` 一致）。 |
+
+**生成 Python stub**（在仓库根目录，输出目录需与 `grpc_ask_server` 的 import 一致，见 [`command.txt`](command.txt)）：
+
+```bash
+python -m grpc_tools.protoc -I. --python_out=server/grpc_generated --grpc_python_out=server/grpc_generated proto/ask.proto
+```
+
+**单独启动 gRPC**（已安装 `server` 依赖、`PYTHONPATH` 含 `llm_common` 时）：`cd server && python grpc_ask_server.py`。
+
 ### loginserver — 前缀以部署为准
 
 经 Nginx 时为 **同源 `/auth/...`**；直连 loginserver 时为 **`http://127.0.0.1:8000/auth/...`**（与 [`webui/src/lib/authBaseUrl.ts`](webui/src/lib/authBaseUrl.ts) 默认一致）。
@@ -104,7 +126,7 @@ flowchart LR
 |------|------|
 | [`src/app/page.tsx`](webui/src/app/page.tsx) | 聊天主页 |
 | [`src/app/settings/`](webui/src/app/settings/) | 设置页（含 MCP Token 区块） |
-| `POST /api/ask` | 服务端转发至 `FLASK_ASK_URL`，体字段 `query`、`stream`、可选 `sessionId`；流式时 **`sessionId`** 在首包 JSON 中（不依赖响应头）。 |
+| `POST /api/ask` | 服务端 RAG 代理：**gRPC**（**`GRPC_ASK_ADDR`**，如 `server:50051`）与 **HTTP**（**`FLASK_ASK_URL`**）的具体选用逻辑见 [`route.ts`](webui/src/app/api/ask/route.ts)。体字段 `query`、`stream`、可选 `sessionId`；流式时 **`sessionId`** 在首包 JSON 中（不依赖响应头）。 |
 
 详见 [webui/README.md](webui/README.md)。
 
@@ -143,7 +165,7 @@ flowchart LR
 
 ### Compose 内联（`docker-compose.yml`）
 
-- **webui**：`FLASK_ASK_URL=http://server:5000/ask`，`NEXT_PUBLIC_AUTH_BASE_URL=/auth`
+- **webui**：`FLASK_ASK_URL=http://server:5000/ask`，`GRPC_ASK_ADDR=server:50051`，`NEXT_PUBLIC_AUTH_BASE_URL=/auth`
 - **loginserver**：`REDIS_URL`、`PG_*`、`ALLOWED_ORIGINS`、`ENABLE_DEBUG_CODE`、**`MCP_SERVER_URL`**
 - **mcpserver**：`PG_*`（与 postgres 服务一致）
 
@@ -190,7 +212,7 @@ cd mcpserver && pip install -e . && cd ..
 2. 启动 Postgres / Redis（或与 compose 只起依赖服务）。  
 3. RAG API：`python server/ollama_qwen.py serve`  
 4. loginserver：在 `loginserver` 目录按项目习惯启动 uvicorn（需 `PG_*`、`REDIS_URL`）。  
-5. 前端：`cd webui && npm install && npm run dev`，设置 `FLASK_ASK_URL`、`NEXT_PUBLIC_AUTH_BASE_URL`。
+5. 前端：`cd webui && npm install && npm run dev`，设置 `FLASK_ASK_URL`、`NEXT_PUBLIC_AUTH_BASE_URL`；若本地已起 gRPC，可设 `GRPC_ASK_ADDR=127.0.0.1:50051`（见 [`webui/src/app/api/ask/route.ts`](webui/src/app/api/ask/route.ts)）。Proto 生成：`cd webui && npm run proto:gen`。
 
 索引 PDF 等可使用 `server/pdf_to_chroma.py`；验证 Ollama 嵌入可用 **`python server/check_ollama_embed.py`**。
 
@@ -198,7 +220,7 @@ cd mcpserver && pip install -e . && cd ..
 
 ## 技术栈摘要
 
-- **后端**：Flask、Gunicorn、FastAPI、Uvicorn、SQLAlchemy、asyncpg、LangChain / LangGraph、FastMCP、DashScope SDK、FAISS（`faiss-cpu`）。  
+- **后端**：Flask、Gunicorn、gRPC（`grpcio` / `grpc.aio`）、FastAPI、Uvicorn、SQLAlchemy、asyncpg、LangChain / LangGraph、FastMCP、DashScope SDK、FAISS（`faiss-cpu`）。  
 - **前端**：Next.js 16、React 19、Tailwind CSS 4、TypeScript。  
 - **基础设施**：PostgreSQL 16、Redis 7、Nginx。
 
@@ -207,7 +229,7 @@ cd mcpserver && pip install -e . && cd ..
 
 ## 版本说明
 
-- **v1.1.0**：**用户登录**（`loginserver` + Redis + PostgreSQL）；RAG 使用 **LangGraph**（`rag_graph`：上下文化、查询增强、检索、守卫、流式/非流式分支、自检与重试）。
+- **v1.1.0**：**用户登录**（`loginserver` + Redis + PostgreSQL）；RAG 使用 **LangGraph**（`rag_graph`：检索、守卫、自检与重试）。
 - **v1.0.0**：RAG 主要基于 **LangChain** 链式组装。
 
 ---

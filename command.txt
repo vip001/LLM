@@ -38,3 +38,6 @@ pip install langchain-mcp-adapters
 postgresql
 mkdir -p /tmp/postgresql && chmod 1777 && brew services restart postgresql@18
 psql -h 127.0.0.1 -p 5432 -U xiafeng -d postgres -c "\dt"
+
+grpc生成
+python -m grpc_tools.protoc -I. --python_out=server/grpc_generated --grpc_python_out=server/grpc_generated proto/ask.proto

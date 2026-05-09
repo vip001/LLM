@@ -1,0 +1,5 @@
+# Web UI image: `npm ci` installs Linux grpc-tools/protoc; host `COPY webui/` must not replace it.
+webui/node_modules
+
+# Local Next.js build output should not be sent as build context or overwrite builder state.
+webui/.next

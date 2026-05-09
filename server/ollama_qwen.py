@@ -6,6 +6,8 @@
   cd /Users/xiafeng/PythonProject/llm/server
   ../.venv/bin/python ollama_qwen.py
   启动 HTTP：../.venv/bin/python ollama_qwen.py serve
+  启动 gRPC（供 Next.js GRPC_ASK_ADDR 流式调用）：../.venv/bin/python grpc_ask_server.py
+  Docker / run_services.sh 会并行启动 gRPC（默认 50051）与 gunicorn。
 
 API 使用：
   GET  /ask?query=MMKV的用法
@@ -29,9 +31,7 @@ API 使用：
    可选 LANGGRAPH_CHECKPOINT_POOL_MAX 调整连接池大小（默认 5）。
 """
 # 必须在 import 任何使用 OpenMP 的库（torch/faiss/numpy 等）之前设置，避免多份 libomp 冲突导致 OMP Error #15
-import json
 import os
-import struct
 import time
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -50,6 +50,7 @@ def _session_id_from_request() -> str | None:
         return sid.strip()
     return None
 
+from ask_handlers import once_ask_payload, stream_ask_body
 from llm_common.rag.qwen_rag_service import QwenRagService
 
 _rag = QwenRagService()
@@ -105,19 +106,6 @@ def _is_ollama_502(e: BaseException) -> bool:
 OLLAMA_502_RETRY_TIMES = 3
 OLLAMA_502_RETRY_DELAYS = (2, 4, 6)
 
-# 流式响应：魔数 + uint32(JSON 字节长度) + UTF-8 JSON({"contexts": [...]}) + 正文 token（UTF-8）
-_STREAM_REFS_MAGIC = b"RAG\x01"
-
-
-def _to_stream_bytes(chunk: Any) -> bytes:
-    if chunk is None:
-        return b""
-    if isinstance(chunk, bytes):
-        return chunk
-    if isinstance(chunk, str):
-        return chunk.encode("utf-8")
-    return str(chunk).encode("utf-8")
-
 
 class AskHttpController:
     """Flask /ask 路由：解析请求参数，调用 RAG 服务，返回 JSON 或 text/plain 流。"""
@@ -142,36 +130,19 @@ class AskHttpController:
         session_id = _session_id_from_request()
         try:
             if stream:
-                contexts, stream_gen, meta = self._rag.ask_stream(
-                    query, trace=trace, thread_id=session_id
-                )
-                refs_payload: dict[str, Any] = {
-                    "contexts": contexts,
-                    "sessionId": meta["sessionId"],
-                }
-                if trace and meta.get("trace") is not None:
-                    refs_payload["trace"] = meta["trace"]
-                refs_bytes = json.dumps(refs_payload, ensure_ascii=False).encode("utf-8")
-                header = _STREAM_REFS_MAGIC + struct.pack(">I", len(refs_bytes)) + refs_bytes
 
                 def stream_refs_then_text():
-                    yield header
-                    first_chunk = None
-                    try:
-                        first_chunk = next(stream_gen)
-                    except StopIteration:
-                        pass
-                    if first_chunk:
-                        yield _to_stream_bytes(first_chunk)
-                    for part in stream_gen:
-                        yield _to_stream_bytes(part)
+                    for part in stream_ask_body(
+                        self._rag, query, trace=trace, thread_id=session_id
+                    ):
+                        yield part
 
                 return Response(
                     stream_refs_then_text(),
                     mimetype="application/octet-stream",
                 )
             print(f"rag askOnce: {query}")
-            payload = self._rag.ask_once(query, trace=trace, thread_id=session_id)
+            payload = once_ask_payload(self._rag, query, trace=trace, thread_id=session_id)
             return jsonify(payload)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400

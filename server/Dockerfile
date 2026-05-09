@@ -15,8 +15,11 @@ RUN pip install --no-cache-dir \
 
 WORKDIR /app
 COPY server/ ./server/
+COPY proto/ ./proto/
 
 WORKDIR /app/server
 
-EXPOSE 5000
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "600", "ollama_qwen:app"]
+RUN chmod +x run_services.sh
+
+EXPOSE 5000 50051
+CMD ["./run_services.sh"]

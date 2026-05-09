@@ -15,16 +15,20 @@ ENV FLASK_ASK_URL=${FLASK_ASK_URL}
 ARG NEXT_PUBLIC_AUTH_BASE_URL=/auth
 ENV NEXT_PUBLIC_AUTH_BASE_URL=${NEXT_PUBLIC_AUTH_BASE_URL}
 COPY webui/ ./
+COPY proto/ask.proto ./proto/ask.proto
+ENV PROTO_ROOT=proto
 RUN npm run build
 
 # Production runtime for Next standalone server (includes /api routes)
+# WORKDIR 为 /app/run；构建阶段用 PROTO_ROOT=proto 从 /app/proto/ask.proto 生成 src/gen（prebuild）
 FROM ${NODE_IMAGE} AS runner
-WORKDIR /app
+WORKDIR /app/run
 
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV FLASK_ASK_URL=http://server:5000/ask
+ENV GRPC_ASK_ADDR=server:50051
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./

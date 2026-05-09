@@ -20,6 +20,7 @@ services:
       LANGGRAPH_CHECKPOINT_DB_URI: ${LANGGRAPH_CHECKPOINT_DB_URI:-postgresql://loginserver:loginserver@postgres:5432/loginserver?sslmode=disable}
     expose:
       - "5000"
+      - "50051"
     volumes:
       - ./server/vectorstore:/app/server/vectorstore
     restart: unless-stopped
@@ -37,6 +38,7 @@ services:
         condition: service_started
     environment:
       FLASK_ASK_URL: http://server:5000/ask
+      GRPC_ASK_ADDR: server:50051
       NEXT_PUBLIC_AUTH_BASE_URL: /auth
     expose:
       - "3000"

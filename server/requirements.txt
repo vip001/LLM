@@ -4,6 +4,8 @@
 # API 服务
 flask>=3.0.0
 gunicorn>=23.0.0
+grpcio>=1.80.0
+grpcio-tools>=1.80.0
 
 # 使用 LangChain 连接本地 Ollama 模型
 langchain>=0.3.0

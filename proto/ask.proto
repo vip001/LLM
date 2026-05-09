@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package rag_ask;
+
+// RAG 问答流式接口，与 Flask /ask 流式体格式一致（首包 RAG\\x01 + JSON 元数据 + UTF-8 正文分片）。
+service AskService {
+  rpc AskStream(AskRequest) returns (stream AskStreamChunk);
+  rpc AskOnce(AskRequest) returns (AskOnceResponse);
+}
+
+message AskRequest {
+  string query = 1;
+  bool stream = 2;
+  bool trace = 3;
+  string session_id = 4;
+}
+
+message AskStreamChunk {
+  bytes body_chunk = 1;
+}
+
+message AskOnceResponse {
+  bytes json_body = 1;
+}
