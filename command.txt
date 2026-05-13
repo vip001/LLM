@@ -41,3 +41,5 @@ psql -h 127.0.0.1 -p 5432 -U xiafeng -d postgres -c "\dt"
 
 grpc生成
 python -m grpc_tools.protoc -I. --python_out=server/grpc_generated --grpc_python_out=server/grpc_generated proto/ask.proto
+
+kill -9 $(lsof -ti :5000)

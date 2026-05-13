@@ -7,6 +7,7 @@ import {
   useState,
   useRef,
   useEffect,
+  useCallback,
   FormEvent,
   type ReactNode,
 } from "react";
@@ -30,19 +31,89 @@ function useChatState() {
   const [error, setError] = useState<string | null>(null);
   const [saveHint, setSaveHint] = useState(false);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  /** 用户是否在底部附近：上翻读历史时为 false，暂停跟滚 */
+  const stickToBottomRef = useRef(true);
+  const suppressStickFromProgrammaticScrollRef = useRef(false);
+  const scrollToBottomRafRef = useRef<number | null>(null);
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+
   /** 后端 LangGraph thread，多轮 RAG / 代词消解依赖此 ID 回传 */
   const ragSessionIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
+  const scheduleScrollToBottom = useCallback(
+    (opts?: { layoutOnly?: boolean }) => {
+    const el = messagesScrollRef.current;
+    if (!el || !stickToBottomRef.current) return;
+
+    if (scrollToBottomRafRef.current != null) {
+      cancelAnimationFrame(scrollToBottomRafRef.current);
+    }
+    scrollToBottomRafRef.current = requestAnimationFrame(() => {
+      scrollToBottomRafRef.current = null;
+      const target = messagesScrollRef.current;
+      if (!target || !stickToBottomRef.current) return;
+
+      const useSmooth =
+        !loadingRef.current && !opts?.layoutOnly;
+      suppressStickFromProgrammaticScrollRef.current = true;
+      target.scrollTo({
+        top: target.scrollHeight,
+        behavior: useSmooth ? "smooth" : "auto",
+      });
+      window.setTimeout(
+        () => {
+          suppressStickFromProgrammaticScrollRef.current = false;
+        },
+        useSmooth ? 450 : 0,
+      );
+    });
+  },
+  [],
+);
+
+  const handleMessagesScroll = useCallback(() => {
+    if (suppressStickFromProgrammaticScrollRef.current) return;
     const el = messagesScrollRef.current;
     if (!el) return;
-    el.scrollTo({
-      top: el.scrollHeight,
-      behavior: loading ? "auto" : "smooth",
-    });
-  }, [messages, loading]);
+    const slack = 80;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = dist <= slack;
+  }, []);
+
+  useEffect(() => {
+    scheduleScrollToBottom();
+    return () => {
+      if (scrollToBottomRafRef.current != null) {
+        cancelAnimationFrame(scrollToBottomRafRef.current);
+        scrollToBottomRafRef.current = null;
+      }
+    };
+  }, [messages, loading, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    const scroll = messagesScrollRef.current;
+    if (!scroll) return;
+
+    const onLayoutChange = () => {
+      if (!stickToBottomRef.current) return;
+      scheduleScrollToBottom({ layoutOnly: true });
+    };
+
+    const ro = new ResizeObserver(onLayoutChange);
+    ro.observe(scroll);
+
+    const mo = new MutationObserver(onLayoutChange);
+    mo.observe(scroll, { childList: true, subtree: true });
+
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, [scheduleScrollToBottom]);
 
   function resetChat() {
+    stickToBottomRef.current = true;
     setMessages([{ id: "welcome", role: "assistant", content: WELCOME_TEXT }]);
     setError(null);
     setChatTitle("新对话");
@@ -52,8 +123,8 @@ function useChatState() {
 
   function clearChat() {
     resetChat();
+   
   }
-
   function saveChat() {
     try {
       const payload = { title: chatTitle, messages, savedAt: Date.now() };
@@ -79,6 +150,8 @@ function useChatState() {
     e.preventDefault();
     const q = query.trim();
     if (!q || loading) return;
+
+    stickToBottomRef.current = true;
 
     setError(null);
 
@@ -136,7 +209,6 @@ function useChatState() {
         setMessages((m) => m.filter((x) => x.id !== asstId));
         return;
       }
-
       const reader = res.body?.getReader();
       if (!reader) {
         setError("无法读取响应流");
@@ -186,6 +258,7 @@ function useChatState() {
     error,
     saveHint,
     messagesScrollRef,
+    handleMessagesScroll,
     clearChat,
     saveChat,
     selectSidebar,

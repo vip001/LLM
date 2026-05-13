@@ -8,7 +8,10 @@ gRPC 流式 RAG 问答服务（与 Flask /ask 语义一致），基于 asyncio�
 与 gunicorn 同容器并行时使用 run_services.sh / Dockerfile CMD。
 """
 from __future__ import annotations
-
+import sys
+import os
+_server_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(_server_dir, "grpc_generated"))
 import asyncio
 import json
 import os

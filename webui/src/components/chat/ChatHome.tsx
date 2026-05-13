@@ -18,6 +18,7 @@ export function ChatHome() {
     error,
     saveHint,
     messagesScrollRef,
+    handleMessagesScroll,
     clearChat,
     saveChat,
     selectSidebar,
@@ -51,6 +52,7 @@ export function ChatHome() {
             messages={messages}
             loading={loading}
             messagesScrollRef={messagesScrollRef}
+            onMessagesScroll={handleMessagesScroll}
           />
 
           {error && (
